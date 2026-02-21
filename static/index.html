@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paper TLDR</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f8f9fa;
+  --sidebar-bg: #ffffff;
+  --card-bg: #ffffff;
+  --border: #e2e8f0;
+  --text: #1a202c;
+  --text-secondary: #64748b;
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --success: #10b981;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.1);
+}
+
+html, body { height: 100%; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+header {
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+header .subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Layout */
+.layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 300px;
+  min-width: 300px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Upload Zone */
+.upload-zone {
+  margin: 16px;
+  padding: 24px 16px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.upload-zone:hover,
+.upload-zone.dragover {
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.upload-zone .icon {
+  font-size: 28px;
+  margin-bottom: 6px;
+  opacity: 0.5;
+}
+
+.upload-zone p {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.upload-zone.uploading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.upload-zone input { display: none; }
+
+/* Search */
+.search-box {
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+.search-box input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.search-box input:focus {
+  border-color: var(--primary);
+}
+
+/* Paper List */
+.paper-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.paper-item {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  transition: background 0.15s;
+  margin-bottom: 4px;
+}
+
+.paper-item:hover { background: var(--bg); }
+.paper-item.active { background: rgba(59, 130, 246, 0.08); }
+
+.paper-item .info {
+  flex: 1;
+  min-width: 0;
+}
+
+.paper-item .title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.paper-item .meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.paper-item .badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--success);
+  color: white;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.paper-item .delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.paper-item:hover .delete-btn { opacity: 1; }
+.paper-item .delete-btn:hover { color: var(--danger); background: rgba(239, 68, 68, 0.08); }
+
+.empty-list {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* Main Content */
+.main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Welcome */
+.welcome {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.welcome .icon { font-size: 48px; opacity: 0.3; margin-bottom: 16px; }
+.welcome h2 { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+.welcome p { color: var(--text-secondary); font-size: 14px; }
+
+/* Paper Detail */
+.paper-header {
+  margin-bottom: 24px;
+  flex-shrink: 0;
+}
+
+.paper-header h2 {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-bottom: 8px;
+}
+
+.paper-header .authors {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.paper-header .stats {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.paper-header .stats span {
+  background: var(--bg);
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+/* Action Bar */
+.action-bar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+  flex-shrink: 0;
+}
+
+.btn {
+  padding: 8px 20px;
+  border-radius: var(--radius);
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: white;
+}
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: var(--border); }
+
+/* Report Content */
+.report-content {
+  flex: 1;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  box-shadow: var(--shadow);
+  line-height: 1.7;
+  overflow-y: auto;
+}
+
+.report-content h2 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 28px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--primary);
+  color: var(--primary);
+}
+
+.report-content h2:first-child { margin-top: 0; }
+
+.report-content h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 20px 0 8px;
+}
+
+.report-content p { margin-bottom: 12px; font-size: 14.5px; }
+
+.report-content ul, .report-content ol {
+  margin: 8px 0 16px 24px;
+  font-size: 14.5px;
+}
+
+.report-content li { margin-bottom: 4px; }
+
+.report-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  margin: 16px auto;
+  display: block;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+}
+
+.report-content code {
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.report-content blockquote {
+  border-left: 3px solid var(--primary);
+  padding-left: 16px;
+  margin: 12px 0;
+  color: var(--text-secondary);
+}
+
+.report-content strong { font-weight: 600; }
+
+/* Generating indicator */
+.generating {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--primary);
+  margin-bottom: 16px;
+}
+
+.generating .dot {
+  width: 6px;
+  height: 6px;
+  background: var(--primary);
+  border-radius: 50%;
+  animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* Spinner */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  padding: 12px 20px;
+  background: var(--text);
+  color: white;
+  border-radius: var(--radius);
+  font-size: 13px;
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  animation: slideUp 0.3s;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.toast.error { background: var(--danger); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Paper TLDR</h1>
+  <span class="subtitle">AI-powered paper reading assistant</span>
+</header>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="upload-zone" id="uploadZone">
+      <div class="icon">+</div>
+      <p>Drop PDF here or click to upload</p>
+      <input type="file" id="fileInput" accept=".pdf">
+    </div>
+
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="Search papers...">
+    </div>
+
+    <div class="paper-list" id="paperList">
+      <div class="empty-list">No papers yet. Upload a PDF to get started.</div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main" id="mainContent">
+    <div class="welcome" id="welcomeView">
+      <div>
+        <div class="icon">&#128218;</div>
+        <h2>Welcome to Paper TLDR</h2>
+        <p>Upload a PDF paper to generate a structured reading report<br>with extracted figures and AI-powered analysis.</p>
+      </div>
+    </div>
+
+    <div id="paperView" style="display:none; flex:1; display:none; flex-direction:column;">
+      <div class="paper-header" id="paperHeader"></div>
+      <div class="action-bar" id="actionBar"></div>
+      <div id="generatingIndicator" class="generating" style="display:none;">
+        <span class="dot"></span> Generating report...
+      </div>
+      <div class="report-content" id="reportContent" style="display:none;"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const API = '/api';
+
+let currentPaperId = null;
+let isGenerating = false;
+let eventSource = null;
+
+// --- Upload ---
+const uploadZone = $('#uploadZone');
+const fileInput = $('#fileInput');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  uploadZone.classList.add('dragover');
+});
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.toLowerCase().endsWith('.pdf')) uploadFile(file);
+  else showToast('Please drop a PDF file', true);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) uploadFile(fileInput.files[0]);
+});
+
+async function uploadFile(file) {
+  uploadZone.classList.add('uploading');
+  uploadZone.querySelector('p').textContent = 'Processing...';
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch(`${API}/papers/upload`, { method: 'POST', body: formData });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Upload failed');
+    const data = await res.json();
+    showToast(`Uploaded: ${data.title} (${data.num_figures} figures)`);
+    await loadPaperList();
+    selectPaper(data.paper_id);
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    uploadZone.classList.remove('uploading');
+    uploadZone.querySelector('p').textContent = 'Drop PDF here or click to upload';
+    fileInput.value = '';
+  }
+}
+
+// --- Paper List ---
+let searchTimer = null;
+$('#searchInput').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadPaperList(e.target.value), 300);
+});
+
+async function loadPaperList(query = '') {
+  try {
+    const res = await fetch(`${API}/papers?q=${encodeURIComponent(query)}`);
+    const papers = await res.json();
+    renderPaperList(papers);
+  } catch (e) {
+    console.error('Failed to load papers:', e);
+  }
+}
+
+function renderPaperList(papers) {
+  const list = $('#paperList');
+  if (!papers.length) {
+    list.innerHTML = '<div class="empty-list">No papers found.</div>';
+    return;
+  }
+  list.innerHTML = papers.map(p => `
+    <div class="paper-item ${p.id === currentPaperId ? 'active' : ''}"
+         data-id="${p.id}" onclick="selectPaper('${p.id}')">
+      <div class="info">
+        <div class="title">${escapeHtml(p.title || p.filename)}</div>
+        <div class="meta">${p.num_pages} pages &middot; ${p.num_figures} figures &middot; ${formatDate(p.created_at)}</div>
+      </div>
+      ${p.has_report ? '<span class="badge">Report</span>' : ''}
+      <button class="delete-btn" onclick="event.stopPropagation(); deletePaper('${p.id}')" title="Delete">&times;</button>
+    </div>
+  `).join('');
+}
+
+async function deletePaper(id) {
+  if (!confirm('Delete this paper and its report?')) return;
+  try {
+    await fetch(`${API}/papers/${id}`, { method: 'DELETE' });
+    if (currentPaperId === id) {
+      currentPaperId = null;
+      showWelcome();
+    }
+    await loadPaperList($('#searchInput').value);
+    showToast('Paper deleted');
+  } catch (e) {
+    showToast('Failed to delete', true);
+  }
+}
+
+// --- Paper Detail ---
+async function selectPaper(id) {
+  if (isGenerating && eventSource) {
+    eventSource.close();
+    isGenerating = false;
+  }
+  currentPaperId = id;
+  // Update active state in list
+  document.querySelectorAll('.paper-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.id === id);
+  });
+
+  try {
+    const res = await fetch(`${API}/papers/${id}`);
+    const paper = await res.json();
+    showPaperView(paper);
+  } catch (e) {
+    showToast('Failed to load paper', true);
+  }
+}
+
+function showWelcome() {
+  $('#welcomeView').style.display = 'flex';
+  $('#paperView').style.display = 'none';
+}
+
+function showPaperView(paper) {
+  $('#welcomeView').style.display = 'none';
+  const pv = $('#paperView');
+  pv.style.display = 'flex';
+  pv.style.flexDirection = 'column';
+
+  // Header
+  $('#paperHeader').innerHTML = `
+    <h2>${escapeHtml(paper.title)}</h2>
+    ${paper.authors ? `<div class="authors">${escapeHtml(paper.authors)}</div>` : ''}
+    <div class="stats">
+      <span>${paper.num_pages} pages</span>
+      <span>${paper.num_figures} figures</span>
+      <span>${escapeHtml(paper.filename)}</span>
+    </div>
+  `;
+
+  // Actions
+  const hasReport = !!paper.report;
+  $('#actionBar').innerHTML = `
+    <button class="btn btn-primary" onclick="generateReport('${paper.id}')"
+            ${isGenerating ? 'disabled' : ''}>
+      ${hasReport ? 'Regenerate Report' : 'Generate Report'}
+    </button>
+    ${hasReport ? `<a class="btn btn-secondary" href="${API}/papers/${paper.id}/report" download>Download .md</a>` : ''}
+  `;
+
+  // Report
+  const rc = $('#reportContent');
+  const gi = $('#generatingIndicator');
+  gi.style.display = 'none';
+  if (hasReport) {
+    rc.style.display = 'block';
+    rc.innerHTML = marked.parse(paper.report);
+  } else {
+    rc.style.display = 'none';
+    rc.innerHTML = '';
+  }
+}
+
+// --- Report Generation (SSE) ---
+function generateReport(paperId) {
+  if (isGenerating) return;
+  isGenerating = true;
+
+  const rc = $('#reportContent');
+  const gi = $('#generatingIndicator');
+  rc.style.display = 'block';
+  rc.innerHTML = '';
+  gi.style.display = 'flex';
+
+  // Update button
+  const btn = $('#actionBar .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+
+  let markdown = '';
+  let renderTimer = null;
+
+  eventSource = new EventSource(`${API}/papers/${paperId}/generate`);
+
+  eventSource.onmessage = (e) => {
+    if (e.data === '[DONE]') {
+      eventSource.close();
+      isGenerating = false;
+      gi.style.display = 'none';
+
+      // Final render
+      rc.innerHTML = marked.parse(markdown);
+
+      // Update buttons
+      if (btn) { btn.disabled = false; btn.textContent = 'Regenerate Report'; }
+      $('#actionBar').innerHTML += `
+        <a class="btn btn-secondary" href="${API}/papers/${paperId}/report" download>Download .md</a>
+      `;
+
+      // Refresh list to show badge
+      loadPaperList($('#searchInput').value);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(e.data);
+      if (parsed.error) {
+        eventSource.close();
+        isGenerating = false;
+        gi.style.display = 'none';
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate Report'; }
+        showToast('Generation error: ' + parsed.error, true);
+        return;
+      }
+      markdown += parsed;
+    } catch {
+      // Plain text chunk
+      markdown += e.data;
+    }
+
+    // Debounced render for performance
+    if (!renderTimer) {
+      renderTimer = requestAnimationFrame(() => {
+        rc.innerHTML = marked.parse(markdown);
+        renderTimer = null;
+      });
+    }
+  };
+
+  eventSource.onerror = () => {
+    eventSource.close();
+    isGenerating = false;
+    gi.style.display = 'none';
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Report'; }
+    if (!markdown) {
+      showToast('Connection lost. Please try again.', true);
+    }
+  };
+}
+
+// --- Utilities ---
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'Z');
+  return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function showToast(msg, isError = false) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (isError ? ' error' : '');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+// Init
+loadPaperList();
+</script>
+</body>
+</html>
