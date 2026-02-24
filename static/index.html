@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Paper TLDR</title>
+<title>DeepReading</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -208,8 +209,7 @@ header .subtitle {
 /* Main Content */
 .main {
   flex: 1;
-  overflow-y: auto;
-  padding: 32px;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -228,8 +228,15 @@ header .subtitle {
 .welcome p { color: var(--text-secondary); font-size: 14px; }
 
 /* Paper Detail */
+#paperView {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .paper-header {
-  margin-bottom: 24px;
+  margin: 24px 32px 0;
   flex-shrink: 0;
 }
 
@@ -263,7 +270,7 @@ header .subtitle {
 .action-bar {
   display: flex;
   gap: 10px;
-  margin-bottom: 24px;
+  margin: 16px 32px;
   flex-shrink: 0;
 }
 
@@ -294,16 +301,122 @@ header .subtitle {
 }
 .btn-secondary:hover { background: var(--border); }
 
+/* Language select */
+.lang-select {
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+}
+.lang-select:focus { border-color: var(--primary); }
+
+/* Thinking panel (collapsible tool-call log) */
+.thinking-panel {
+  margin: 0 32px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.thinking-header:hover { background: rgba(0,0,0,0.04); }
+
+.thinking-toggle {
+  font-size: 10px;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.thinking-toggle.open { transform: rotate(90deg); }
+
+.thinking-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--primary);
+  border-radius: 50%;
+  animation: pulse 1.2s infinite;
+  flex-shrink: 0;
+}
+
+.thinking-badge {
+  font-size: 11px;
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--primary);
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.thinking-body {
+  padding: 4px 12px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  max-height: 200px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  line-height: 1.6;
+}
+
+.thinking-item {
+  padding: 2px 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.thinking-item::before {
+  content: '\25b8';
+  color: var(--primary);
+  opacity: 0.5;
+  flex-shrink: 0;
+  font-size: 10px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* Split layout */
+.main-split {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  gap: 0;
+}
+
+.main-split .report-side {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 32px 32px;
+  min-width: 0;
+}
+
 /* Report Content */
 .report-content {
-  flex: 1;
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 32px;
   box-shadow: var(--shadow);
   line-height: 1.7;
-  overflow-y: auto;
 }
 
 .report-content h2 {
@@ -358,27 +471,157 @@ header .subtitle {
 
 .report-content strong { font-weight: 600; }
 
-/* Generating indicator */
-.generating {
+/* PDF Panel */
+.pdf-panel {
+  width: 50%;
+  min-width: 320px;
+  border-left: 2px solid var(--border);
+  display: none;
+  flex-direction: column;
+  background: var(--card-bg);
+  flex-shrink: 0;
+}
+
+.pdf-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.pdf-panel-header button {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.pdf-panel-header button:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+/* PDF toggle button */
+.btn-pdf {
+  background: var(--bg);
+  color: var(--primary);
+  border: 1px solid var(--primary);
+}
+.btn-pdf:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+/* Citation badge */
+.citation {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--primary);
-  margin-bottom: 16px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  padding: 1px 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  margin-left: 2px;
+  vertical-align: middle;
+  transition: all 0.15s;
+  text-decoration: none;
+  line-height: 1.5;
 }
 
-.generating .dot {
-  width: 6px;
-  height: 6px;
-  background: var(--primary);
-  border-radius: 50%;
-  animation: pulse 1.2s infinite;
+.citation:hover {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: var(--primary);
+  color: var(--primary-hover);
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
+/* PDF Viewer (pdf.js) */
+.pdf-viewer-container {
+  flex: 1;
+  overflow-y: auto;
+  background: #525659;
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.pdf-page-wrapper {
+  position: relative;
+  background: white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  flex-shrink: 0;
+}
+
+.pdf-page-wrapper canvas {
+  display: block;
+}
+
+.pdf-page-label {
+  position: absolute;
+  bottom: 4px;
+  right: 6px;
+  font-size: 10px;
+  color: rgba(0,0,0,0.35);
+  background: rgba(255,255,255,0.7);
+  padding: 1px 5px;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.page-highlight-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  animation: highlightFadeOut 2.5s ease-out forwards;
+  border: 3px solid rgba(59,130,246,0.8);
+  background: rgba(59,130,246,0.15);
+}
+
+@keyframes highlightFadeOut {
+  0% { border-color: rgba(59,130,246,0.9); background: rgba(59,130,246,0.25); }
+  60% { border-color: rgba(59,130,246,0.4); background: rgba(59,130,246,0.06); }
+  100% { border-color: transparent; background: transparent; }
+}
+
+/* Text-level highlight (pdf.js text layer) */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-size-adjust: none;
+  z-index: 3;
+}
+
+.pdf-text-layer > span,
+.pdf-text-layer > br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  transform-origin: 0% 0%;
+}
+
+.pdf-text-layer > span.highlight {
+  background: rgba(255, 212, 0, 0.5);
+  border-radius: 2px;
+}
+
+.pdf-text-layer > span.highlight.fading {
+  transition: background 1.5s ease-out;
+  background: transparent;
 }
 
 /* Spinner */
@@ -426,7 +669,7 @@ header .subtitle {
 <body>
 
 <header>
-  <h1>Paper TLDR</h1>
+  <h1>DeepReading</h1>
   <span class="subtitle">AI-powered paper reading assistant</span>
 </header>
 
@@ -453,18 +696,35 @@ header .subtitle {
     <div class="welcome" id="welcomeView">
       <div>
         <div class="icon">&#128218;</div>
-        <h2>Welcome to Paper TLDR</h2>
+        <h2>Welcome to DeepReading</h2>
         <p>Upload a PDF paper to generate a structured reading report<br>with extracted figures and AI-powered analysis.</p>
       </div>
     </div>
 
-    <div id="paperView" style="display:none; flex:1; display:none; flex-direction:column;">
+    <div id="paperView">
       <div class="paper-header" id="paperHeader"></div>
       <div class="action-bar" id="actionBar"></div>
-      <div id="generatingIndicator" class="generating" style="display:none;">
-        <span class="dot"></span> Generating report...
+      <div class="thinking-panel" id="thinkingPanel" style="display:none;">
+        <div class="thinking-header" onclick="toggleThinking()">
+          <span class="thinking-toggle" id="thinkingToggle">&#9654;</span>
+          <span class="thinking-dot" id="thinkingDot"></span>
+          <span id="thinkingTitle">Analyzing paper...</span>
+          <span class="thinking-badge" id="thinkingBadge" style="display:none;"></span>
+        </div>
+        <div class="thinking-body" id="thinkingBody" style="display:none;"></div>
       </div>
-      <div class="report-content" id="reportContent" style="display:none;"></div>
+      <div class="main-split" id="mainSplit">
+        <div class="report-side" id="reportSide">
+          <div class="report-content" id="reportContent" style="display:none;"></div>
+        </div>
+        <div class="pdf-panel" id="pdfPanel">
+          <div class="pdf-panel-header">
+            <span id="pdfPanelTitle">PDF Viewer</span>
+            <button onclick="closePdfPanel()" title="Close PDF viewer">&times;</button>
+          </div>
+          <div id="pdfViewerContainer" class="pdf-viewer-container"></div>
+        </div>
+      </div>
     </div>
   </main>
 </div>
@@ -577,7 +837,6 @@ async function selectPaper(id) {
     isGenerating = false;
   }
   currentPaperId = id;
-  // Update active state in list
   document.querySelectorAll('.paper-item').forEach(el => {
     el.classList.toggle('active', el.dataset.id === id);
   });
@@ -598,9 +857,7 @@ function showWelcome() {
 
 function showPaperView(paper) {
   $('#welcomeView').style.display = 'none';
-  const pv = $('#paperView');
-  pv.style.display = 'flex';
-  pv.style.flexDirection = 'column';
+  $('#paperView').style.display = 'flex';
 
   // Header
   $('#paperHeader').innerHTML = `
@@ -620,16 +877,22 @@ function showPaperView(paper) {
             ${isGenerating ? 'disabled' : ''}>
       ${hasReport ? 'Regenerate Report' : 'Generate Report'}
     </button>
-    ${hasReport ? `<a class="btn btn-secondary" href="${API}/papers/${paper.id}/report" download>Download .md</a>` : ''}
+    <select id="langSelect" class="lang-select">
+      <option value="en">English</option>
+      <option value="zh">中文</option>
+    </select>
+    <button class="btn btn-pdf" onclick="openPdfPanel()">View PDF</button>
+    ${hasReport ? `<a class="btn btn-secondary btn-download" href="${API}/papers/${paper.id}/report" download>Download .md</a>` : ''}
   `;
 
   // Report
   const rc = $('#reportContent');
-  const gi = $('#generatingIndicator');
-  gi.style.display = 'none';
+  const tp = $('#thinkingPanel');
+  tp.style.display = 'none';
+  closePdfPanel();
   if (hasReport) {
     rc.style.display = 'block';
-    rc.innerHTML = marked.parse(paper.report);
+    rc.innerHTML = renderMarkdown(paper.report);
   } else {
     rc.style.display = 'none';
     rc.innerHTML = '';
@@ -642,36 +905,47 @@ function generateReport(paperId) {
   isGenerating = true;
 
   const rc = $('#reportContent');
-  const gi = $('#generatingIndicator');
+  const tp = $('#thinkingPanel');
   rc.style.display = 'block';
   rc.innerHTML = '';
-  gi.style.display = 'flex';
+  tp.style.display = 'block';
+  resetThinking();
 
-  // Update button
   const btn = $('#actionBar .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
 
   let markdown = '';
   let renderTimer = null;
+  const lang = ($('#langSelect') || {}).value || 'en';
 
-  eventSource = new EventSource(`${API}/papers/${paperId}/generate`);
+  eventSource = new EventSource(`${API}/papers/${paperId}/generate?lang=${lang}`);
 
   eventSource.onmessage = (e) => {
     if (e.data === '[DONE]') {
       eventSource.close();
       isGenerating = false;
-      gi.style.display = 'none';
 
-      // Final render
-      rc.innerHTML = marked.parse(markdown);
+      // Finalize thinking panel (collapse, hide dot)
+      $('#thinkingDot').style.display = 'none';
+      $('#thinkingTitle').textContent = `Analysis complete (${thinkingSteps.length} tool calls)`;
+      $('#thinkingToggle').classList.remove('open');
+      $('#thinkingBody').style.display = 'none';
 
-      // Update buttons
+      const replaceMatch = markdown.match(/<!--FULL_REPLACE-->([\s\S]*)<!--\/FULL_REPLACE-->/);
+      const finalMarkdown = replaceMatch ? replaceMatch[1] : markdown;
+
+      rc.innerHTML = renderMarkdown(finalMarkdown);
+
       if (btn) { btn.disabled = false; btn.textContent = 'Regenerate Report'; }
-      $('#actionBar').innerHTML += `
-        <a class="btn btn-secondary" href="${API}/papers/${paperId}/report" download>Download .md</a>
-      `;
+      if (!$('#actionBar .btn-download')) {
+        const dl = document.createElement('a');
+        dl.className = 'btn btn-secondary btn-download';
+        dl.href = `${API}/papers/${paperId}/report`;
+        dl.download = '';
+        dl.textContent = 'Download .md';
+        $('#actionBar').appendChild(dl);
+      }
 
-      // Refresh list to show badge
       loadPaperList($('#searchInput').value);
       return;
     }
@@ -681,21 +955,31 @@ function generateReport(paperId) {
       if (parsed.error) {
         eventSource.close();
         isGenerating = false;
-        gi.style.display = 'none';
+        $('#thinkingPanel').style.display = 'none';
         if (btn) { btn.disabled = false; btn.textContent = 'Generate Report'; }
         showToast('Generation error: ' + parsed.error, true);
         return;
       }
-      markdown += parsed;
+
+      const text = typeof parsed === 'string' ? parsed : String(parsed);
+
+      // Detect status messages (<!--STATUS:...-->)
+      const statusMatch = text.match(/<!--STATUS:(.*?)-->/);
+      if (statusMatch) {
+        addThinkingStep(statusMatch[1]);
+        // Strip status markers before adding to markdown
+        const cleaned = text.replace(/<!--STATUS:.*?-->/g, '');
+        if (cleaned) markdown += cleaned;
+      } else {
+        markdown += text;
+      }
     } catch {
-      // Plain text chunk
       markdown += e.data;
     }
 
-    // Debounced render for performance
     if (!renderTimer) {
       renderTimer = requestAnimationFrame(() => {
-        rc.innerHTML = marked.parse(markdown);
+        rc.innerHTML = renderMarkdown(markdown);
         renderTimer = null;
       });
     }
@@ -704,12 +988,375 @@ function generateReport(paperId) {
   eventSource.onerror = () => {
     eventSource.close();
     isGenerating = false;
-    gi.style.display = 'none';
+    $('#thinkingDot').style.display = 'none';
+    $('#thinkingTitle').textContent = 'Generation interrupted';
     if (btn) { btn.disabled = false; btn.textContent = 'Generate Report'; }
     if (!markdown) {
       showToast('Connection lost. Please try again.', true);
     }
   };
+}
+
+// --- Render markdown with citations (placeholder approach) ---
+// Citations are extracted BEFORE marked.parse to avoid bracket interference.
+function renderMarkdown(rawMarkdown) {
+  // Strip status markers
+  let md = rawMarkdown.replace(/<!--STATUS:.*?-->/g, '');
+
+  // Only show content from first heading onward (skip LLM thinking text)
+  const headingIdx = md.search(/^##\s/m);
+  if (headingIdx > 0) md = md.substring(headingIdx);
+
+  // Extract citations → placeholders before markdown parsing
+  const cites = [];
+  md = md.replace(
+    /\[\[p\.(\d+)(?::(\d+))?\s*(?:"([^"]*)")?\s*\]\]/g,
+    (match, page, yPos, quote) => {
+      cites.push({ page, yPos: yPos || null, quote: quote || '' });
+      return `%%CITE${cites.length - 1}%%`;
+    }
+  );
+
+  // Parse markdown (preserves %%CITE_N%% as plain text)
+  let html = marked.parse(md);
+
+  // Replace placeholders with citation badges
+  html = html.replace(/%%CITE(\d+)%%/g, (m, idx) => {
+    const c = cites[parseInt(idx)];
+    if (!c) return m;
+    const yAttr = c.yPos ? ` data-y="${c.yPos}"` : '';
+    const qSafe = c.quote.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    const quoteAttr = c.quote ? ` data-quote="${qSafe}"` : '';
+    return `<span class="citation" data-page="${c.page}"${yAttr}${quoteAttr}>[p.${c.page}]</span>`;
+  });
+
+  return html;
+}
+
+// --- Thinking panel ---
+let thinkingSteps = [];
+
+function toggleThinking() {
+  const body = $('#thinkingBody');
+  const toggle = $('#thinkingToggle');
+  const isHidden = body.style.display === 'none';
+  body.style.display = isHidden ? 'block' : 'none';
+  toggle.classList.toggle('open', isHidden);
+}
+
+function addThinkingStep(text) {
+  thinkingSteps.push(text);
+  const body = $('#thinkingBody');
+  const item = document.createElement('div');
+  item.className = 'thinking-item';
+  item.textContent = text;
+  body.appendChild(item);
+  body.scrollTop = body.scrollHeight;
+  const badge = $('#thinkingBadge');
+  badge.style.display = 'inline';
+  badge.textContent = thinkingSteps.length + ' steps';
+  $('#thinkingTitle').textContent = text;
+}
+
+function resetThinking() {
+  thinkingSteps = [];
+  $('#thinkingBody').innerHTML = '';
+  $('#thinkingBadge').style.display = 'none';
+  $('#thinkingTitle').textContent = 'Analyzing paper...';
+  $('#thinkingToggle').classList.remove('open');
+  $('#thinkingBody').style.display = 'none';
+  $('#thinkingDot').style.display = '';
+}
+
+// Event delegation for citation clicks
+document.getElementById('reportContent').addEventListener('click', (e) => {
+  const cite = e.target.closest('.citation');
+  if (!cite) return;
+  const page = parseInt(cite.dataset.page);
+  const y = cite.dataset.y ? parseInt(cite.dataset.y) : null;
+  const quote = cite.dataset.quote || '';
+  goToPage(page, quote, y);
+});
+
+// --- PDF Viewer (pdf.js) ---
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const pdfState = {
+  doc: null,
+  paperId: null,
+  pageInfos: [],
+  rendered: new Set(),
+  observer: null,
+};
+
+async function loadPdfDocument(paperId) {
+  const container = $('#pdfViewerContainer');
+  container.innerHTML = '<div style="color:#aaa;text-align:center;padding:40px;">Loading PDF...</div>';
+
+  try {
+    const doc = await pdfjsLib.getDocument(`/data/uploads/${paperId}.pdf`).promise;
+    pdfState.doc = doc;
+    pdfState.paperId = paperId;
+    pdfState.rendered.clear();
+    pdfState.pageInfos = [];
+
+    // Get page dimensions for correctly-sized placeholders
+    const containerWidth = container.clientWidth - 16;
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const vp = page.getViewport({ scale: 1 });
+      const scale = Math.max(containerWidth / vp.width, 0.5);
+      pdfState.pageInfos.push({ width: vp.width * scale, height: vp.height * scale, scale });
+    }
+
+    // Create page placeholder elements
+    container.innerHTML = '';
+    for (let i = 0; i < doc.numPages; i++) {
+      const info = pdfState.pageInfos[i];
+      const wrapper = document.createElement('div');
+      wrapper.className = 'pdf-page-wrapper';
+      wrapper.id = `pdfPage${i + 1}`;
+      wrapper.dataset.page = i + 1;
+      wrapper.style.width = info.width + 'px';
+      wrapper.style.height = info.height + 'px';
+
+      const label = document.createElement('div');
+      label.className = 'pdf-page-label';
+      label.textContent = i + 1;
+      wrapper.appendChild(label);
+      container.appendChild(wrapper);
+    }
+
+    // Lazy render pages as they scroll into view
+    if (pdfState.observer) pdfState.observer.disconnect();
+    pdfState.observer = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) renderPdfPage(parseInt(e.target.dataset.page));
+      });
+    }, { root: container, rootMargin: '600px 0px' });
+    container.querySelectorAll('.pdf-page-wrapper').forEach(el => pdfState.observer.observe(el));
+
+  } catch (e) {
+    container.innerHTML = '<div style="color:#f66;text-align:center;padding:40px;">Failed to load PDF</div>';
+    console.error('PDF load error:', e);
+  }
+}
+
+async function renderPdfPage(pageNum) {
+  if (pdfState.rendered.has(pageNum) || !pdfState.doc) return;
+  pdfState.rendered.add(pageNum);
+
+  const page = await pdfState.doc.getPage(pageNum);
+  const info = pdfState.pageInfos[pageNum - 1];
+  const viewport = page.getViewport({ scale: info.scale });
+  const dpr = window.devicePixelRatio || 1;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.floor(viewport.width * dpr);
+  canvas.height = Math.floor(viewport.height * dpr);
+  canvas.style.width = viewport.width + 'px';
+  canvas.style.height = viewport.height + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  await page.render({ canvasContext: ctx, viewport }).promise;
+
+  const wrapper = document.getElementById(`pdfPage${pageNum}`);
+  if (wrapper) wrapper.insertBefore(canvas, wrapper.firstChild);
+}
+
+async function goToPage(page, quote, yNorm) {
+  const panel = $('#pdfPanel');
+  panel.style.display = 'flex';
+  panel.offsetHeight; // force reflow so container has width
+  $('#pdfPanelTitle').textContent = 'PDF — Page ' + page;
+
+  if (pdfState.paperId !== currentPaperId) {
+    await loadPdfDocument(currentPaperId);
+  }
+
+  // Ensure the target page is rendered before scrolling
+  await renderPdfPage(page);
+
+  const wrapper = document.getElementById(`pdfPage${page}`);
+  if (!wrapper) return;
+
+  // Remove any previous highlights
+  document.querySelectorAll('.page-highlight-overlay, .pdf-text-layer').forEach(el => el.remove());
+
+  // Try text-level highlight if quote is available
+  let textHighlighted = false;
+  if (quote) {
+    textHighlighted = await highlightQuoteOnPage(page, quote);
+  }
+
+  // Fallback: use y-position or page-level highlight
+  if (!textHighlighted) {
+    if (yNorm !== null && yNorm !== undefined) {
+      scrollToYPosition(wrapper, yNorm);
+    } else {
+      const overlay = document.createElement('div');
+      overlay.className = 'page-highlight-overlay';
+      wrapper.appendChild(overlay);
+      overlay.addEventListener('animationend', () => overlay.remove());
+      wrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+}
+
+function scrollToYPosition(wrapper, yNorm) {
+  const container = $('#pdfViewerContainer');
+  const wrapperRect = wrapper.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const pageHeight = wrapperRect.height;
+
+  // yNorm is 0-1000, convert to pixel offset within the page
+  const yPixel = (yNorm / 1000) * pageHeight;
+
+  // Calculate the absolute scroll position in the container
+  const wrapperTopInContainer = container.scrollTop + wrapperRect.top - containerRect.top;
+  const targetScroll = wrapperTopInContainer + yPixel - containerRect.height / 3;
+
+  container.scrollTo({ top: targetScroll, behavior: 'smooth' });
+
+  // Add a brief position indicator line
+  const indicator = document.createElement('div');
+  indicator.style.cssText = `
+    position: absolute;
+    left: 0; right: 0;
+    top: ${yPixel}px;
+    height: 3px;
+    background: rgba(59, 130, 246, 0.6);
+    z-index: 5;
+    pointer-events: none;
+    animation: highlightFadeOut 2.5s ease-out forwards;
+  `;
+  wrapper.appendChild(indicator);
+  indicator.addEventListener('animationend', () => indicator.remove());
+}
+
+async function highlightQuoteOnPage(pageNum, quote) {
+  if (!pdfState.doc || !quote) return false;
+  const wrapper = document.getElementById(`pdfPage${pageNum}`);
+  if (!wrapper) return false;
+
+  try {
+    const page = await pdfState.doc.getPage(pageNum);
+    const info = pdfState.pageInfos[pageNum - 1];
+    const viewport = page.getViewport({ scale: info.scale });
+    const textContent = await page.getTextContent();
+
+    // Create text layer
+    const textLayer = document.createElement('div');
+    textLayer.className = 'pdf-text-layer';
+
+    const textDivs = [];
+    const task = pdfjsLib.renderTextLayer({
+      textContentSource: textContent,
+      container: textLayer,
+      viewport,
+      textDivs,
+    });
+    await task.promise;
+
+    // Build searchable text from spans
+    let fullText = '';
+    const spanMap = [];
+    for (const span of textDivs) {
+      const text = span.textContent || '';
+      if (!text.trim()) continue;
+      spanMap.push({ start: fullText.length, end: fullText.length + text.length, span });
+      fullText += text + ' ';
+    }
+
+    // Search with multiple strategies
+    const searchText = quote.trim().toLowerCase();
+    const fullLower = fullText.toLowerCase();
+    let matchStart = -1, matchLen = searchText.length;
+
+    // Strategy 1: exact substring match
+    matchStart = fullLower.indexOf(searchText);
+
+    // Strategy 2: flexible whitespace (join words with \s+)
+    if (matchStart === -1) {
+      const words = searchText.split(/\s+/).filter(w => w.length > 0);
+      if (words.length >= 2) {
+        const pattern = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+        const regex = new RegExp(pattern, 'i');
+        const m = fullText.match(regex);
+        if (m) { matchStart = m.index; matchLen = m[0].length; }
+      }
+    }
+
+    // Strategy 3: partial match with first half of words
+    if (matchStart === -1) {
+      const words = searchText.split(/\s+/).filter(w => w.length > 0);
+      if (words.length >= 3) {
+        const partial = words.slice(0, Math.max(3, Math.ceil(words.length * 0.5)));
+        const pattern = partial.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+        const regex = new RegExp(pattern, 'i');
+        const m = fullText.match(regex);
+        if (m) { matchStart = m.index; matchLen = m[0].length; }
+      }
+    }
+
+    if (matchStart === -1) {
+      textLayer.remove();
+      return false;
+    }
+
+    const matchEnd = matchStart + matchLen;
+    const highlightedSpans = [];
+    for (const { start, end, span } of spanMap) {
+      if (start < matchEnd && end > matchStart) {
+        span.classList.add('highlight');
+        highlightedSpans.push(span);
+      }
+    }
+
+    if (highlightedSpans.length === 0) {
+      textLayer.remove();
+      return false;
+    }
+
+    wrapper.appendChild(textLayer);
+
+    // Scroll precisely to the highlighted text
+    setTimeout(() => {
+      const container = $('#pdfViewerContainer');
+      const spanRect = highlightedSpans[0].getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const spanTopInContainer = container.scrollTop + spanRect.top - containerRect.top;
+      container.scrollTo({ top: spanTopInContainer - containerRect.height / 3, behavior: 'smooth' });
+    }, 100);
+
+    // Auto-fade highlights after delay
+    setTimeout(() => {
+      highlightedSpans.forEach(s => s.classList.add('fading'));
+      setTimeout(() => textLayer.remove(), 2000);
+    }, 5000);
+
+    return true;
+  } catch (e) {
+    console.error('Text highlight error:', e);
+    return false;
+  }
+}
+
+async function openPdfPanel() {
+  const panel = $('#pdfPanel');
+  if (panel.style.display === 'flex') return;
+  panel.style.display = 'flex';
+  panel.offsetHeight;
+  $('#pdfPanelTitle').textContent = 'PDF Viewer';
+
+  if (pdfState.paperId !== currentPaperId) {
+    await loadPdfDocument(currentPaperId);
+  }
+}
+
+function closePdfPanel() {
+  $('#pdfPanel').style.display = 'none';
 }
 
 // --- Utilities ---

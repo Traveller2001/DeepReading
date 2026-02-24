@@ -21,7 +21,7 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 FIGURES_DIR = DATA_DIR / "figures"
 STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="Paper TLDR")
+app = FastAPI(title="DeepReading")
 
 # Ensure directories exist before mounting StaticFiles
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -35,6 +35,7 @@ async def startup():
 
 # --- Static file serving ---
 app.mount("/data/figures", StaticFiles(directory=str(FIGURES_DIR)), name="figures")
+app.mount("/data/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -119,7 +120,7 @@ async def api_delete_paper(paper_id: str):
 # --- Report generation (SSE streaming) ---
 
 @app.get("/api/papers/{paper_id}/generate")
-async def api_generate_report(paper_id: str):
+async def api_generate_report(paper_id: str, lang: str = Query("en", description="Report language: en or zh")):
     paper = await get_paper(paper_id)
     if not paper:
         raise HTTPException(404, "Paper not found")
@@ -127,7 +128,7 @@ async def api_generate_report(paper_id: str):
 
     async def event_stream():
         try:
-            async for chunk in generate_report_stream(paper, figures):
+            async for chunk in generate_report_stream(paper, figures, lang=lang):
                 escaped = json.dumps(chunk)
                 yield f"data: {escaped}\n\n"
         except Exception as e:
