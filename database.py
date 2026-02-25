@@ -38,6 +38,13 @@ async def init_db():
                 caption     TEXT NOT NULL DEFAULT ''
             );
         """)
+        # Migration: add discussion columns if missing
+        cursor = await conn.execute("PRAGMA table_info(papers)")
+        existing_cols = {row[1] for row in await cursor.fetchall()}
+        if "discussion" not in existing_cols:
+            await conn.execute("ALTER TABLE papers ADD COLUMN discussion TEXT")
+        if "discussion_status" not in existing_cols:
+            await conn.execute("ALTER TABLE papers ADD COLUMN discussion_status TEXT")
         await conn.commit()
 
 
@@ -90,7 +97,7 @@ async def list_papers(query: str = "") -> list[dict]:
         if query:
             cursor = await conn.execute(
                 """SELECT id, title, authors, filename, num_pages, num_figures,
-                   report IS NOT NULL as has_report, created_at
+                   report IS NOT NULL as has_report, discussion_status, created_at
                    FROM papers
                    WHERE title LIKE ? OR authors LIKE ? OR filename LIKE ?
                    ORDER BY created_at DESC""",
@@ -99,7 +106,7 @@ async def list_papers(query: str = "") -> list[dict]:
         else:
             cursor = await conn.execute(
                 """SELECT id, title, authors, filename, num_pages, num_figures,
-                   report IS NOT NULL as has_report, created_at
+                   report IS NOT NULL as has_report, discussion_status, created_at
                    FROM papers ORDER BY created_at DESC"""
             )
         rows = await cursor.fetchall()
@@ -119,5 +126,14 @@ async def update_report(paper_id: str, report: str):
         await conn.execute(
             "UPDATE papers SET report = ?, updated_at = datetime('now') WHERE id = ?",
             (report, paper_id),
+        )
+        await conn.commit()
+
+
+async def update_discussion(paper_id: str, discussion_json: str, status: str):
+    async with _db() as conn:
+        await conn.execute(
+            "UPDATE papers SET discussion = ?, discussion_status = ?, updated_at = datetime('now') WHERE id = ?",
+            (discussion_json, status, paper_id),
         )
         await conn.commit()

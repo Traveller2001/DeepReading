@@ -6,3 +6,6 @@ openai
 Pillow
 python-multipart
 python-dotenv
+playwright
+matplotlib
+numpy

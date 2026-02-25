@@ -452,6 +452,41 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_figure",
+            "description": (
+                "Generate a high-quality explanatory diagram by writing HTML/CSS/SVG "
+                "code. The code is rendered in a headless browser and saved as a PNG "
+                "image. Write the BODY content only — the outer <html>/<body> tags, "
+                "fonts, and padding are provided automatically. After calling this "
+                "tool, insert the returned image path in your report using "
+                "![description](path) syntax."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": (
+                            "HTML/CSS/SVG code for the diagram body content. "
+                            "Use <style> for CSS, <div> for layout, <svg> for "
+                            "vector graphics. Do NOT include <html> or <body> tags."
+                        ),
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": (
+                            "Brief description used as filename and alt text "
+                            "(e.g. 'model_architecture', 'training_pipeline')"
+                        ),
+                    },
+                },
+                "required": ["code", "description"],
+            },
+        },
+    },
 ]
 
 

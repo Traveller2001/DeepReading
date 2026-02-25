@@ -6,6 +6,9 @@
 <title>DeepReading</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -34,6 +37,7 @@ body {
   color: var(--text);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* Header */
@@ -462,6 +466,23 @@ header .subtitle {
   font-size: 13px;
 }
 
+.report-content .mermaid-container {
+  text-align: center;
+  margin: 24px 0;
+  padding: 24px 16px;
+  background: linear-gradient(135deg, #f8fafc 0%, #f0f4f8 100%);
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  overflow-x: auto;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.report-content .mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.06));
+}
+
 .report-content blockquote {
   border-left: 3px solid var(--primary);
   padding-left: 16px;
@@ -480,6 +501,7 @@ header .subtitle {
   flex-direction: column;
   background: var(--card-bg);
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .pdf-panel-header {
@@ -562,6 +584,7 @@ header .subtitle {
   background: white;
   box-shadow: 0 1px 4px rgba(0,0,0,0.3);
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .pdf-page-wrapper canvas {
@@ -596,32 +619,19 @@ header .subtitle {
   100% { border-color: transparent; background: transparent; }
 }
 
-/* Text-level highlight (pdf.js text layer) */
-.pdf-text-layer {
+/* Text-level highlight (computed rectangles) */
+.pdf-highlight-layer {
   position: absolute;
   inset: 0;
-  overflow: hidden;
-  line-height: 1;
-  text-size-adjust: none;
+  pointer-events: none;
   z-index: 3;
 }
 
-.pdf-text-layer > span,
-.pdf-text-layer > br {
-  color: transparent;
+.pdf-highlight-rect {
   position: absolute;
-  white-space: pre;
-  transform-origin: 0% 0%;
-}
-
-.pdf-text-layer > span.highlight {
-  background: rgba(255, 212, 0, 0.5);
+  background: rgba(255, 212, 0, 0.45);
   border-radius: 2px;
-}
-
-.pdf-text-layer > span.highlight.fading {
-  transition: background 1.5s ease-out;
-  background: transparent;
+  pointer-events: none;
 }
 
 /* Spinner */
@@ -664,6 +674,130 @@ header .subtitle {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* Discussion Feature */
+
+.panel-tabs {
+  display: flex;
+  gap: 0;
+  flex: 1;
+}
+
+.panel-tab {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.panel-tab:hover { color: var(--text); }
+.panel-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.discussion-view {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.discussion-view.active { display: flex; }
+
+.discussion-round-divider {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.discussion-round-divider::before,
+.discussion-round-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.discussion-msg {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  line-height: 1.65;
+  border-left: 3px solid;
+  word-wrap: break-word;
+}
+
+.discussion-msg .msg-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.discussion-msg.reader {
+  background: rgba(59, 130, 246, 0.06);
+  border-left-color: var(--primary);
+}
+
+.discussion-msg.reader .msg-label { color: var(--primary); }
+
+.discussion-msg.writer {
+  background: rgba(16, 185, 129, 0.06);
+  border-left-color: var(--success);
+}
+
+.discussion-msg.writer .msg-label { color: var(--success); }
+
+.discussion-msg .msg-body { white-space: pre-wrap; }
+.discussion-msg .msg-body.rendered { white-space: normal; }
+.discussion-msg .msg-body p { margin-bottom: 8px; font-size: 13.5px; }
+.discussion-msg .msg-body p:last-child { margin-bottom: 0; }
+.discussion-msg .msg-body code {
+  background: rgba(0,0,0,0.06);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12.5px;
+}
+.discussion-msg .msg-body .citation { font-size: 10px; }
+
+.polish-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin: 0 32px 10px;
+  background: linear-gradient(90deg, rgba(16,185,129,0.08), rgba(59,130,246,0.08));
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.polish-indicator .spinner {
+  border-top-color: var(--success);
+}
+
+.discussion-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
 </style>
 </head>
 <body>
@@ -678,7 +812,7 @@ header .subtitle {
   <aside class="sidebar">
     <div class="upload-zone" id="uploadZone">
       <div class="icon">+</div>
-      <p>Drop PDF here or click to upload</p>
+      <p>📎 Drop PDF here or click to upload</p>
       <input type="file" id="fileInput" accept=".pdf">
     </div>
 
@@ -719,10 +853,16 @@ header .subtitle {
         </div>
         <div class="pdf-panel" id="pdfPanel">
           <div class="pdf-panel-header">
-            <span id="pdfPanelTitle">PDF Viewer</span>
-            <button onclick="closePdfPanel()" title="Close PDF viewer">&times;</button>
+            <div class="panel-tabs">
+              <button class="panel-tab active" id="tabPdf" onclick="switchPanelTab('pdf')">📄 PDF</button>
+              <button class="panel-tab" id="tabDiscussion" onclick="switchPanelTab('discussion')">💬 Discussion</button>
+            </div>
+            <button onclick="closeRightPanel()" title="Close panel">&times;</button>
           </div>
           <div id="pdfViewerContainer" class="pdf-viewer-container"></div>
+          <div id="discussionView" class="discussion-view">
+            <div class="discussion-empty">Discussion will start automatically after report generation.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -735,6 +875,7 @@ const API = '/api';
 
 let currentPaperId = null;
 let isGenerating = false;
+let isDiscussing = false;
 let eventSource = null;
 
 // --- Upload ---
@@ -774,7 +915,7 @@ async function uploadFile(file) {
     showToast(e.message, true);
   } finally {
     uploadZone.classList.remove('uploading');
-    uploadZone.querySelector('p').textContent = 'Drop PDF here or click to upload';
+    uploadZone.querySelector('p').textContent = '📎 Drop PDF here or click to upload';
     fileInput.value = '';
   }
 }
@@ -836,6 +977,9 @@ async function selectPaper(id) {
     eventSource.close();
     isGenerating = false;
   }
+  if (isDiscussing) {
+    isDiscussing = false;
+  }
   currentPaperId = id;
   document.querySelectorAll('.paper-item').forEach(el => {
     el.classList.toggle('active', el.dataset.id === id);
@@ -873,33 +1017,38 @@ function showPaperView(paper) {
   // Actions
   const hasReport = !!paper.report;
   $('#actionBar').innerHTML = `
-    <button class="btn btn-primary" onclick="generateReport('${paper.id}')"
-            ${isGenerating ? 'disabled' : ''}>
-      ${hasReport ? 'Regenerate Report' : 'Generate Report'}
+    <button class="btn btn-primary" id="btnGenerate" onclick="generateReport('${paper.id}')"
+            ${isGenerating || isDiscussing ? 'disabled' : ''}>
+      ${hasReport ? '🔄 Regenerate Report' : '✨ Generate Report'}
     </button>
     <select id="langSelect" class="lang-select">
       <option value="en">English</option>
       <option value="zh">中文</option>
     </select>
-    <button class="btn btn-pdf" onclick="openPdfPanel()">View PDF</button>
-    ${hasReport ? `<a class="btn btn-secondary btn-download" href="${API}/papers/${paper.id}/report" download>Download .md</a>` : ''}
+    <button class="btn btn-pdf" onclick="openPdfPanel()">📄 View PDF</button>
+    ${hasReport ? `<a class="btn btn-secondary btn-download" href="${API}/papers/${paper.id}/report" download>⬇ Download .md</a>` : ''}
   `;
 
   // Report
   const rc = $('#reportContent');
   const tp = $('#thinkingPanel');
   tp.style.display = 'none';
-  closePdfPanel();
+  closeRightPanel();
   if (hasReport) {
     rc.style.display = 'block';
     rc.innerHTML = renderMarkdown(paper.report);
+    renderMermaidDiagrams();
+    // Load saved discussion
+    loadSavedDiscussion(paper.id);
   } else {
     rc.style.display = 'none';
     rc.innerHTML = '';
+    // Reset discussion view
+    $('#discussionView').innerHTML = '<div class="discussion-empty">Discussion will start automatically after report generation.</div>';
   }
 }
 
-// --- Report Generation (SSE) ---
+// --- Report Generation (SSE) with integrated Discussion ---
 function generateReport(paperId) {
   if (isGenerating) return;
   isGenerating = true;
@@ -912,11 +1061,19 @@ function generateReport(paperId) {
   resetThinking();
 
   const btn = $('#actionBar .btn-primary');
-  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating...'; }
 
   let markdown = '';
   let renderTimer = null;
   const lang = ($('#langSelect') || {}).value || 'en';
+
+  // Discussion state (used when discussion events arrive in the same stream)
+  let inDiscussion = false;
+  let currentMsgEl = null;
+  let polishIndicator = null;
+  let polishMarkdown = '';
+  let polishRenderTimer = null;
+  const discView = $('#discussionView');
 
   eventSource = new EventSource(`${API}/papers/${paperId}/generate?lang=${lang}`);
 
@@ -924,25 +1081,31 @@ function generateReport(paperId) {
     if (e.data === '[DONE]') {
       eventSource.close();
       isGenerating = false;
+      isDiscussing = false;
 
-      // Finalize thinking panel (collapse, hide dot)
+      // Finalize thinking panel
       $('#thinkingDot').style.display = 'none';
       $('#thinkingTitle').textContent = `Analysis complete (${thinkingSteps.length} tool calls)`;
       $('#thinkingToggle').classList.remove('open');
       $('#thinkingBody').style.display = 'none';
 
-      const replaceMatch = markdown.match(/<!--FULL_REPLACE-->([\s\S]*)<!--\/FULL_REPLACE-->/);
-      const finalMarkdown = replaceMatch ? replaceMatch[1] : markdown;
+      if (!inDiscussion) {
+        // No discussion happened (e.g. empty report), finalize report only
+        const replaceMatch = markdown.match(/<!--FULL_REPLACE-->([\s\S]*)<!--\/FULL_REPLACE-->/);
+        const finalMarkdown = replaceMatch ? replaceMatch[1] : markdown;
+        rc.innerHTML = renderMarkdown(finalMarkdown);
+        renderMermaidDiagrams();
+      }
 
-      rc.innerHTML = renderMarkdown(finalMarkdown);
+      if (polishIndicator) polishIndicator.remove();
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 Regenerate Report'; }
 
-      if (btn) { btn.disabled = false; btn.textContent = 'Regenerate Report'; }
       if (!$('#actionBar .btn-download')) {
         const dl = document.createElement('a');
         dl.className = 'btn btn-secondary btn-download';
         dl.href = `${API}/papers/${paperId}/report`;
         dl.download = '';
-        dl.textContent = 'Download .md';
+        dl.textContent = '⬇ Download .md';
         $('#actionBar').appendChild(dl);
       }
 
@@ -950,31 +1113,42 @@ function generateReport(paperId) {
       return;
     }
 
+    let parsed;
     try {
-      const parsed = JSON.parse(e.data);
-      if (parsed.error) {
-        eventSource.close();
-        isGenerating = false;
-        $('#thinkingPanel').style.display = 'none';
-        if (btn) { btn.disabled = false; btn.textContent = 'Generate Report'; }
-        showToast('Generation error: ' + parsed.error, true);
-        return;
-      }
-
-      const text = typeof parsed === 'string' ? parsed : String(parsed);
-
-      // Detect status messages (<!--STATUS:...-->)
-      const statusMatch = text.match(/<!--STATUS:(.*?)-->/);
-      if (statusMatch) {
-        addThinkingStep(statusMatch[1]);
-        // Strip status markers before adding to markdown
-        const cleaned = text.replace(/<!--STATUS:.*?-->/g, '');
-        if (cleaned) markdown += cleaned;
-      } else {
-        markdown += text;
-      }
+      parsed = JSON.parse(e.data);
     } catch {
-      markdown += e.data;
+      if (!inDiscussion) markdown += e.data;
+      return;
+    }
+
+    // Error handling
+    if (parsed && typeof parsed === 'object' && parsed.error) {
+      eventSource.close();
+      isGenerating = false;
+      isDiscussing = false;
+      $('#thinkingPanel').style.display = 'none';
+      if (btn) { btn.disabled = false; btn.textContent = '✨ Generate Report'; }
+      showToast('Error: ' + parsed.error, true);
+      return;
+    }
+
+    // Discussion/polish events (dict with type field)
+    if (parsed && typeof parsed === 'object' && parsed.type) {
+      handleDiscussionEvent(parsed, discView, rc);
+      return;
+    }
+
+    // Report text chunk (string)
+    const text = typeof parsed === 'string' ? parsed : String(parsed);
+
+    // Detect status messages
+    const statusMatch = text.match(/<!--STATUS:(.*?)-->/);
+    if (statusMatch) {
+      addThinkingStep(statusMatch[1]);
+      const cleaned = text.replace(/<!--STATUS:.*?-->/g, '');
+      if (cleaned) markdown += cleaned;
+    } else {
+      markdown += text;
     }
 
     if (!renderTimer) {
@@ -986,15 +1160,129 @@ function generateReport(paperId) {
   };
 
   eventSource.onerror = () => {
-    eventSource.close();
-    isGenerating = false;
-    $('#thinkingDot').style.display = 'none';
-    $('#thinkingTitle').textContent = 'Generation interrupted';
-    if (btn) { btn.disabled = false; btn.textContent = 'Generate Report'; }
-    if (!markdown) {
+    // Don't kill connection if we have data — SSE may recover on its own.
+    // Only close if we never received anything (true connection failure).
+    if (!markdown && !inDiscussion) {
+      eventSource.close();
+      isGenerating = false;
+      isDiscussing = false;
+      $('#thinkingDot').style.display = 'none';
+      $('#thinkingTitle').textContent = 'Generation interrupted';
+      if (btn) { btn.disabled = false; btn.textContent = '✨ Generate Report'; }
+      if (polishIndicator) polishIndicator.remove();
       showToast('Connection lost. Please try again.', true);
     }
   };
+
+  // --- Inline handler for discussion events within the same stream ---
+  function handleDiscussionEvent(event, discView, rc) {
+    switch (event.type) {
+      case 'discussion_start': {
+        inDiscussion = true;
+        isDiscussing = true;
+        // Finalize report rendering before starting discussion
+        const replaceMatch = markdown.match(/<!--FULL_REPLACE-->([\s\S]*)<!--\/FULL_REPLACE-->/);
+        const finalMarkdown = replaceMatch ? replaceMatch[1] : markdown;
+        rc.innerHTML = renderMarkdown(finalMarkdown);
+        renderMermaidDiagrams();
+
+        // Collapse thinking panel
+        $('#thinkingDot').style.display = 'none';
+        $('#thinkingTitle').textContent = `Report done (${thinkingSteps.length} tool calls). Starting review...`;
+        $('#thinkingToggle').classList.remove('open');
+        $('#thinkingBody').style.display = 'none';
+
+        // Open right panel with Discussion tab
+        const panel = $('#pdfPanel');
+        panel.style.display = 'flex';
+        switchPanelTab('discussion');
+        discView.innerHTML = '';
+
+        if (btn) btn.textContent = '💬 Reviewing...';
+        break;
+      }
+      case 'discussion_round': {
+        // Render previous writer message if there was one
+        if (currentMsgEl && currentMsgEl.classList.contains('writer')) {
+          renderDiscussionMsgBody(currentMsgEl.querySelector('.msg-body'));
+        }
+        const divider = document.createElement('div');
+        divider.className = 'discussion-round-divider';
+        divider.textContent = `Round ${event.round} / ${event.total}`;
+        discView.appendChild(divider);
+        currentMsgEl = null;
+        break;
+      }
+      case 'reader_chunk': {
+        if (!currentMsgEl || !currentMsgEl.classList.contains('reader') || parseInt(currentMsgEl.dataset.round) !== event.round) {
+          currentMsgEl = createDiscussionMsg('reader', event.round);
+          currentMsgEl.dataset.round = event.round;
+          discView.appendChild(currentMsgEl);
+        }
+        const rbody = currentMsgEl.querySelector('.msg-body');
+        rbody.dataset.raw = (rbody.dataset.raw || '') + event.content;
+        rbody.textContent = rbody.dataset.raw;
+        discView.scrollTop = discView.scrollHeight;
+        break;
+      }
+      case 'writer_chunk': {
+        if (!currentMsgEl || !currentMsgEl.classList.contains('writer') || parseInt(currentMsgEl.dataset.round) !== event.round) {
+          currentMsgEl = createDiscussionMsg('writer', event.round);
+          currentMsgEl.dataset.round = event.round;
+          discView.appendChild(currentMsgEl);
+        }
+        const wbody = currentMsgEl.querySelector('.msg-body');
+        // Accumulate raw text properly in dataset
+        wbody.dataset.raw = (wbody.dataset.raw || '') + event.content;
+        // Show plain text during streaming to avoid rendering thrash
+        wbody.textContent = wbody.dataset.raw;
+        discView.scrollTop = discView.scrollHeight;
+        break;
+      }
+      case 'discussion_end': {
+        // Final render pass: render all messages with markdown/citations/LaTeX
+        discView.querySelectorAll('.discussion-msg .msg-body').forEach(renderDiscussionMsgBody);
+        if (btn) btn.textContent = '✏️ Polishing...';
+        break;
+      }
+      case 'polish_start': {
+        polishIndicator = document.createElement('div');
+        polishIndicator.className = 'polish-indicator';
+        polishIndicator.innerHTML = '<span class="spinner"></span> Polishing report based on discussion...';
+        const reportSide = $('#reportSide');
+        reportSide.insertBefore(polishIndicator, reportSide.firstChild);
+        // Reset polish accumulator for streaming
+        polishMarkdown = '';
+        polishRenderTimer = null;
+        break;
+      }
+      case 'polish_chunk': {
+        polishMarkdown += event.content;
+        if (!polishRenderTimer) {
+          polishRenderTimer = requestAnimationFrame(() => {
+            rc.innerHTML = renderMarkdown(polishMarkdown);
+            polishRenderTimer = null;
+          });
+        }
+        break;
+      }
+      case 'polish_end': {
+        if (polishIndicator) polishIndicator.remove();
+        polishIndicator = null;
+        // Final render with the complete polished report
+        const finalReport = event.report || polishMarkdown;
+        if (finalReport) {
+          rc.innerHTML = renderMarkdown(finalReport);
+          renderMermaidDiagrams();
+        }
+        break;
+      }
+      case 'discussion_error': {
+        showToast('Discussion error: ' + (event.error || 'Unknown'), true);
+        break;
+      }
+    }
+  }
 }
 
 // --- Render markdown with citations (placeholder approach) ---
@@ -1030,7 +1318,39 @@ function renderMarkdown(rawMarkdown) {
     return `<span class="citation" data-page="${c.page}"${yAttr}${quoteAttr}>[p.${c.page}]</span>`;
   });
 
+  // Convert mermaid code blocks to renderable containers
+  html = html.replace(
+    /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
+    (match, code) => {
+      const decoded = code
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&').replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+      return `<div class="mermaid-container"><pre class="mermaid">${decoded}</pre></div>`;
+    }
+  );
+
   return html;
+}
+
+// Render mermaid diagrams after DOM update
+let _mermaidId = 0;
+async function renderMermaidDiagrams() {
+  const nodes = document.querySelectorAll('#reportContent pre.mermaid');
+  for (const node of nodes) {
+    if (node.dataset.rendered) continue;
+    node.dataset.rendered = 'true';
+    try {
+      const id = 'mermaid-' + (++_mermaidId);
+      const { svg } = await mermaid.render(id, node.textContent.trim());
+      node.innerHTML = svg;
+    } catch (e) {
+      console.warn('Mermaid render error:', e);
+      // Leave the raw code visible on error
+      node.style.color = 'var(--text-secondary)';
+      node.style.fontSize = '12px';
+    }
+  }
 }
 
 // --- Thinking panel ---
@@ -1075,6 +1395,18 @@ document.getElementById('reportContent').addEventListener('click', (e) => {
   const page = parseInt(cite.dataset.page);
   const y = cite.dataset.y ? parseInt(cite.dataset.y) : null;
   const quote = cite.dataset.quote || '';
+  goToPage(page, quote, y);
+});
+
+// Citation clicks in discussion panel
+document.getElementById('discussionView').addEventListener('click', (e) => {
+  const cite = e.target.closest('.citation');
+  if (!cite) return;
+  const page = parseInt(cite.dataset.page);
+  const y = cite.dataset.y ? parseInt(cite.dataset.y) : null;
+  const quote = cite.dataset.quote || '';
+  // Switch to PDF tab and navigate
+  switchPanelTab('pdf');
   goToPage(page, quote, y);
 });
 
@@ -1169,7 +1501,7 @@ async function goToPage(page, quote, yNorm) {
   const panel = $('#pdfPanel');
   panel.style.display = 'flex';
   panel.offsetHeight; // force reflow so container has width
-  $('#pdfPanelTitle').textContent = 'PDF — Page ' + page;
+  switchPanelTab('pdf');
 
   if (pdfState.paperId !== currentPaperId) {
     await loadPdfDocument(currentPaperId);
@@ -1182,7 +1514,7 @@ async function goToPage(page, quote, yNorm) {
   if (!wrapper) return;
 
   // Remove any previous highlights
-  document.querySelectorAll('.page-highlight-overlay, .pdf-text-layer').forEach(el => el.remove());
+  document.querySelectorAll('.page-highlight-overlay, .pdf-highlight-layer').forEach(el => el.remove());
 
   // Try text-level highlight if quote is available
   let textHighlighted = false;
@@ -1246,27 +1578,18 @@ async function highlightQuoteOnPage(pageNum, quote) {
     const viewport = page.getViewport({ scale: info.scale });
     const textContent = await page.getTextContent();
 
-    // Create text layer
-    const textLayer = document.createElement('div');
-    textLayer.className = 'pdf-text-layer';
-
-    const textDivs = [];
-    const task = pdfjsLib.renderTextLayer({
-      textContentSource: textContent,
-      container: textLayer,
-      viewport,
-      textDivs,
-    });
-    await task.promise;
-
-    // Build searchable text from spans
+    // Build searchable text from text content items (with geometry)
     let fullText = '';
-    const spanMap = [];
-    for (const span of textDivs) {
-      const text = span.textContent || '';
-      if (!text.trim()) continue;
-      spanMap.push({ start: fullText.length, end: fullText.length + text.length, span });
-      fullText += text + ' ';
+    const itemMap = [];
+    for (const item of textContent.items) {
+      const str = item.str || '';
+      if (!str) continue;
+      itemMap.push({
+        start: fullText.length,
+        end: fullText.length + str.length,
+        item: item,
+      });
+      fullText += str + ' ';
     }
 
     // Search with multiple strategies
@@ -1300,40 +1623,55 @@ async function highlightQuoteOnPage(pageNum, quote) {
       }
     }
 
-    if (matchStart === -1) {
-      textLayer.remove();
-      return false;
-    }
+    if (matchStart === -1) return false;
 
     const matchEnd = matchStart + matchLen;
-    const highlightedSpans = [];
-    for (const { start, end, span } of spanMap) {
-      if (start < matchEnd && end > matchStart) {
-        span.classList.add('highlight');
-        highlightedSpans.push(span);
-      }
+
+    // Build highlight rectangles from text item geometry (no text layer rendering)
+    const highlightLayer = document.createElement('div');
+    highlightLayer.className = 'pdf-highlight-layer';
+    let firstRect = null;
+
+    for (const { start, end, item } of itemMap) {
+      if (start >= matchEnd || end <= matchStart) continue;
+
+      // Compute screen position from item transform + viewport transform
+      const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+      const fontHeight = Math.hypot(tx[2], tx[3]);
+      const left = tx[4];
+      const top = tx[5] - fontHeight;
+      const width = item.width * viewport.scale;
+
+      const rect = document.createElement('div');
+      rect.className = 'pdf-highlight-rect';
+      rect.style.left = left + 'px';
+      rect.style.top = top + 'px';
+      rect.style.width = width + 'px';
+      rect.style.height = (fontHeight * 1.15) + 'px';
+      highlightLayer.appendChild(rect);
+      if (!firstRect) firstRect = rect;
     }
 
-    if (highlightedSpans.length === 0) {
-      textLayer.remove();
-      return false;
-    }
+    if (!firstRect) return false;
 
-    wrapper.appendChild(textLayer);
+    wrapper.appendChild(highlightLayer);
 
     // Scroll precisely to the highlighted text
     setTimeout(() => {
       const container = $('#pdfViewerContainer');
-      const spanRect = highlightedSpans[0].getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
-      const spanTopInContainer = container.scrollTop + spanRect.top - containerRect.top;
-      container.scrollTo({ top: spanTopInContainer - containerRect.height / 3, behavior: 'smooth' });
+      const rr = firstRect.getBoundingClientRect();
+      const cr = container.getBoundingClientRect();
+      container.scrollTo({
+        top: container.scrollTop + rr.top - cr.top - cr.height / 3,
+        behavior: 'smooth',
+      });
     }, 100);
 
     // Auto-fade highlights after delay
     setTimeout(() => {
-      highlightedSpans.forEach(s => s.classList.add('fading'));
-      setTimeout(() => textLayer.remove(), 2000);
+      highlightLayer.style.transition = 'opacity 1.5s ease-out';
+      highlightLayer.style.opacity = '0';
+      setTimeout(() => highlightLayer.remove(), 2000);
     }, 5000);
 
     return true;
@@ -1345,18 +1683,141 @@ async function highlightQuoteOnPage(pageNum, quote) {
 
 async function openPdfPanel() {
   const panel = $('#pdfPanel');
-  if (panel.style.display === 'flex') return;
   panel.style.display = 'flex';
   panel.offsetHeight;
-  $('#pdfPanelTitle').textContent = 'PDF Viewer';
+  switchPanelTab('pdf');
 
   if (pdfState.paperId !== currentPaperId) {
     await loadPdfDocument(currentPaperId);
   }
 }
 
-function closePdfPanel() {
+function closeRightPanel() {
   $('#pdfPanel').style.display = 'none';
+}
+
+function switchPanelTab(tab) {
+  const pdfContainer = $('#pdfViewerContainer');
+  const discView = $('#discussionView');
+  const tabPdf = $('#tabPdf');
+  const tabDisc = $('#tabDiscussion');
+
+  if (tab === 'pdf') {
+    pdfContainer.style.display = 'flex';
+    discView.classList.remove('active');
+    tabPdf.classList.add('active');
+    tabDisc.classList.remove('active');
+  } else {
+    pdfContainer.style.display = 'none';
+    discView.classList.add('active');
+    tabPdf.classList.remove('active');
+    tabDisc.classList.add('active');
+  }
+}
+
+// --- Discussion / Review ---
+
+function createDiscussionMsg(role, round) {
+  const div = document.createElement('div');
+  div.className = `discussion-msg ${role}`;
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = role === 'reader' ? `Q${round}` : `A${round}`;
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  div.appendChild(label);
+  div.appendChild(body);
+  return div;
+}
+
+function renderDiscussionMsgBody(bodyEl) {
+  // Always use dataset.raw as the source of truth
+  const raw = bodyEl.dataset.raw;
+  if (!raw) return;
+
+  // Extract citations before markdown parse
+  const cites = [];
+  let md = raw.replace(
+    /\[\[p\.(\d+)(?::(\d+))?\s*(?:"([^"]*)")?\s*\]\]/g,
+    (match, page, yPos, quote) => {
+      cites.push({ page, yPos: yPos || null, quote: quote || '' });
+      return `%%CITE${cites.length - 1}%%`;
+    }
+  );
+
+  // Extract LaTeX blocks before markdown parse
+  const mathBlocks = [];
+  // Block math $$...$$
+  md = md.replace(/\$\$([\s\S]*?)\$\$/g, (m, tex) => {
+    mathBlocks.push({ tex, display: true });
+    return `%%MATH${mathBlocks.length - 1}%%`;
+  });
+  // Inline math $...$
+  md = md.replace(/\$([^\$\n]+?)\$/g, (m, tex) => {
+    mathBlocks.push({ tex, display: false });
+    return `%%MATH${mathBlocks.length - 1}%%`;
+  });
+
+  let html = marked.parse(md);
+
+  // Restore citations
+  html = html.replace(/%%CITE(\d+)%%/g, (m, idx) => {
+    const c = cites[parseInt(idx)];
+    if (!c) return m;
+    const yAttr = c.yPos ? ` data-y="${c.yPos}"` : '';
+    const qSafe = c.quote.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    const quoteAttr = c.quote ? ` data-quote="${qSafe}"` : '';
+    return `<span class="citation" data-page="${c.page}"${yAttr}${quoteAttr}>[p.${c.page}]</span>`;
+  });
+
+  // Restore math blocks with KaTeX
+  html = html.replace(/%%MATH(\d+)%%/g, (m, idx) => {
+    const mb = mathBlocks[parseInt(idx)];
+    if (!mb) return m;
+    try {
+      return katex.renderToString(mb.tex, { displayMode: mb.display, throwOnError: false });
+    } catch {
+      return mb.display ? `$$${mb.tex}$$` : `$${mb.tex}$`;
+    }
+  });
+
+  bodyEl.innerHTML = html;
+  bodyEl.classList.add('rendered');
+}
+
+async function loadSavedDiscussion(paperId) {
+  try {
+    const res = await fetch(`${API}/papers/${paperId}/discussion`);
+    const data = await res.json();
+    if (data.messages && data.messages.length > 0) {
+      renderSavedDiscussion(data.messages);
+    } else {
+      $('#discussionView').innerHTML = '<div class="discussion-empty">No discussion yet.</div>';
+    }
+  } catch (e) {
+    console.error('Failed to load discussion:', e);
+  }
+}
+
+function renderSavedDiscussion(messages) {
+  const discView = $('#discussionView');
+  discView.innerHTML = '';
+  let lastRound = 0;
+
+  for (const msg of messages) {
+    if (msg.round !== lastRound) {
+      lastRound = msg.round;
+      const divider = document.createElement('div');
+      divider.className = 'discussion-round-divider';
+      divider.textContent = `Round ${msg.round}`;
+      discView.appendChild(divider);
+    }
+    const el = createDiscussionMsg(msg.role, msg.round);
+    const body = el.querySelector('.msg-body');
+    body.dataset.raw = msg.content;
+    renderDiscussionMsgBody(body);
+    discView.appendChild(el);
+  }
 }
 
 // --- Utilities ---
@@ -1381,6 +1842,27 @@ function showToast(msg, isError = false) {
 }
 
 // Init
+mermaid.initialize({
+  startOnLoad: false,
+  securityLevel: 'loose',
+  theme: 'base',
+  themeVariables: {
+    primaryColor: '#e0f2fe',
+    primaryTextColor: '#1e293b',
+    primaryBorderColor: '#7dd3fc',
+    secondaryColor: '#fef3c7',
+    secondaryTextColor: '#1e293b',
+    secondaryBorderColor: '#fcd34d',
+    tertiaryColor: '#e0e7ff',
+    tertiaryBorderColor: '#a5b4fc',
+    lineColor: '#64748b',
+    textColor: '#334155',
+    fontSize: '14px',
+    fontFamily: 'system-ui, -apple-system, "Noto Sans CJK SC", sans-serif',
+    nodeTextColor: '#1e293b',
+  },
+  flowchart: { curve: 'basis', padding: 16, nodeSpacing: 50, rankSpacing: 60 },
+});
 loadPaperList();
 </script>
 </body>

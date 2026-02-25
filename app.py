@@ -10,10 +10,10 @@ from fastapi.staticfiles import StaticFiles
 
 from database import (
     init_db, insert_paper, insert_figures, get_paper, get_figures,
-    list_papers, delete_paper,
+    list_papers, delete_paper, update_discussion,
 )
 from pdf_processor import process_pdf, figures_to_dicts
-from llm_service import generate_report_stream
+from llm_service import generate_report_stream, generate_discussion_stream
 
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
@@ -129,7 +129,7 @@ async def api_generate_report(paper_id: str, lang: str = Query("en", description
     async def event_stream():
         try:
             async for chunk in generate_report_stream(paper, figures, lang=lang):
-                escaped = json.dumps(chunk)
+                escaped = json.dumps(chunk, ensure_ascii=False)
                 yield f"data: {escaped}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -160,6 +160,53 @@ async def api_download_report(paper_id: str):
             "Content-Disposition": f"attachment; filename={paper_id}_report.md"
         },
     )
+
+
+# --- Discussion / Review (SSE streaming) ---
+
+@app.get("/api/papers/{paper_id}/discuss")
+async def api_discuss(paper_id: str, lang: str = Query("en", description="Discussion language: en or zh")):
+    paper = await get_paper(paper_id)
+    if not paper:
+        raise HTTPException(404, "Paper not found")
+    if not paper.get("report"):
+        raise HTTPException(400, "Report must be generated before discussion")
+    figures = await get_figures(paper_id)
+
+    # Mark discussion as in-progress
+    await update_discussion(paper_id, "[]", "in_progress")
+
+    async def event_stream():
+        try:
+            async for event in generate_discussion_stream(paper, figures, paper["report"], lang=lang):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/papers/{paper_id}/discussion")
+async def api_get_discussion(paper_id: str):
+    paper = await get_paper(paper_id)
+    if not paper:
+        raise HTTPException(404, "Paper not found")
+    discussion = paper.get("discussion")
+    if not discussion:
+        return {"messages": [], "status": None}
+    try:
+        messages = json.loads(discussion)
+    except json.JSONDecodeError:
+        messages = []
+    return {"messages": messages, "status": paper.get("discussion_status")}
 
 
 if __name__ == "__main__":
