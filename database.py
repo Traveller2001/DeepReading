@@ -38,24 +38,34 @@ async def init_db():
                 caption     TEXT NOT NULL DEFAULT ''
             );
         """)
-        # Migration: add discussion columns if missing
+        # Migration: add columns if missing
         cursor = await conn.execute("PRAGMA table_info(papers)")
         existing_cols = {row[1] for row in await cursor.fetchall()}
         if "discussion" not in existing_cols:
             await conn.execute("ALTER TABLE papers ADD COLUMN discussion TEXT")
         if "discussion_status" not in existing_cols:
             await conn.execute("ALTER TABLE papers ADD COLUMN discussion_status TEXT")
+        if "source_type" not in existing_cols:
+            await conn.execute("ALTER TABLE papers ADD COLUMN source_type TEXT DEFAULT 'pdf'")
+        if "source_url" not in existing_cols:
+            await conn.execute("ALTER TABLE papers ADD COLUMN source_url TEXT")
+        if "source_html" not in existing_cols:
+            await conn.execute("ALTER TABLE papers ADD COLUMN source_html TEXT")
         await conn.commit()
 
 
 async def insert_paper(paper: dict):
     async with _db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
+        # Set defaults for optional columns
+        paper.setdefault("source_type", "pdf")
+        paper.setdefault("source_url", None)
+        paper.setdefault("source_html", None)
         await conn.execute(
             """INSERT INTO papers (id, title, authors, abstract, full_text,
-               num_pages, num_figures, filename)
+               num_pages, num_figures, filename, source_type, source_url, source_html)
                VALUES (:id, :title, :authors, :abstract, :full_text,
-               :num_pages, :num_figures, :filename)""",
+               :num_pages, :num_figures, :filename, :source_type, :source_url, :source_html)""",
             paper,
         )
         await conn.commit()
@@ -97,7 +107,7 @@ async def list_papers(query: str = "") -> list[dict]:
         if query:
             cursor = await conn.execute(
                 """SELECT id, title, authors, filename, num_pages, num_figures,
-                   report IS NOT NULL as has_report, discussion_status, created_at
+                   report IS NOT NULL as has_report, discussion_status, source_type, created_at
                    FROM papers
                    WHERE title LIKE ? OR authors LIKE ? OR filename LIKE ?
                    ORDER BY created_at DESC""",
@@ -106,7 +116,7 @@ async def list_papers(query: str = "") -> list[dict]:
         else:
             cursor = await conn.execute(
                 """SELECT id, title, authors, filename, num_pages, num_figures,
-                   report IS NOT NULL as has_report, discussion_status, created_at
+                   report IS NOT NULL as has_report, discussion_status, source_type, created_at
                    FROM papers ORDER BY created_at DESC"""
             )
         rows = await cursor.fetchall()

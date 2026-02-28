@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import FastAPI, UploadFile, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from database import (
     init_db, insert_paper, insert_figures, get_paper, get_figures,
@@ -91,6 +92,100 @@ async def upload_paper(file: UploadFile):
     }
 
 
+class UrlRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/papers/upload_url")
+async def upload_url(req: UrlRequest):
+    from html_processor import fetch_url, detect_content_type, process_html
+
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(400, "URL is required")
+
+    paper_id = uuid4().hex
+    fig_dir = FIGURES_DIR / paper_id
+
+    try:
+        content_type, body = await asyncio.to_thread(fetch_url, url)
+    except Exception as e:
+        raise HTTPException(400, f"Failed to fetch URL: {e}")
+
+    source_type = detect_content_type(url, content_type, body)
+
+    if source_type == "pdf":
+        # Save as PDF file and use existing pipeline
+        pdf_path = UPLOADS_DIR / f"{paper_id}.pdf"
+        pdf_path.write_bytes(body)
+
+        try:
+            result = await asyncio.to_thread(
+                process_pdf, body, paper_id, str(fig_dir)
+            )
+        except Exception as e:
+            pdf_path.unlink(missing_ok=True)
+            shutil.rmtree(fig_dir, ignore_errors=True)
+            raise HTTPException(500, f"Failed to process PDF: {e}")
+
+        await insert_paper({
+            "id": paper_id,
+            "title": result.title,
+            "authors": result.authors,
+            "abstract": result.abstract,
+            "full_text": result.full_text,
+            "num_pages": result.num_pages,
+            "num_figures": len(result.figures),
+            "filename": url,
+            "source_type": "pdf",
+            "source_url": url,
+        })
+        if result.figures:
+            await insert_figures(paper_id, figures_to_dicts(result.figures))
+
+        return {
+            "paper_id": paper_id,
+            "title": result.title,
+            "num_figures": len(result.figures),
+            "num_pages": result.num_pages,
+            "source_type": "pdf",
+        }
+
+    else:
+        # HTML processing
+        try:
+            result = await asyncio.to_thread(
+                process_html, url, body, paper_id, str(fig_dir)
+            )
+        except Exception as e:
+            shutil.rmtree(fig_dir, ignore_errors=True)
+            raise HTTPException(500, f"Failed to process HTML: {e}")
+
+        await insert_paper({
+            "id": paper_id,
+            "title": result.title,
+            "authors": result.authors,
+            "abstract": result.abstract,
+            "full_text": result.full_text,
+            "num_pages": result.num_pages,
+            "num_figures": len(result.figures),
+            "filename": url,
+            "source_type": "html",
+            "source_url": url,
+            "source_html": result.clean_html,
+        })
+        if result.figures:
+            await insert_figures(paper_id, result.figures)
+
+        return {
+            "paper_id": paper_id,
+            "title": result.title,
+            "num_figures": len(result.figures),
+            "num_pages": result.num_pages,
+            "source_type": "html",
+        }
+
+
 @app.get("/api/papers")
 async def api_list_papers(q: str = Query("", description="Search query")):
     papers = await list_papers(q)
@@ -104,6 +199,17 @@ async def api_get_paper(paper_id: str):
         raise HTTPException(404, "Paper not found")
     figures = await get_figures(paper_id)
     return {**paper, "figures": figures}
+
+
+@app.get("/api/papers/{paper_id}/html")
+async def api_get_paper_html(paper_id: str):
+    paper = await get_paper(paper_id)
+    if not paper:
+        raise HTTPException(404, "Paper not found")
+    html_content = paper.get("source_html")
+    if not html_content:
+        raise HTTPException(404, "No HTML content for this paper")
+    return HTMLResponse(content=html_content)
 
 
 @app.delete("/api/papers/{paper_id}")

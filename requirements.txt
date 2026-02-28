@@ -9,3 +9,6 @@ python-dotenv
 playwright
 matplotlib
 numpy
+beautifulsoup4
+requests
+lxml

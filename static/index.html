@@ -116,6 +116,56 @@ header .subtitle {
 
 .upload-zone input { display: none; }
 
+/* URL Input */
+.url-input-bar {
+  display: flex;
+  gap: 6px;
+  margin: 0 16px 12px;
+  flex-shrink: 0;
+}
+
+.url-input-bar input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+  min-width: 0;
+}
+
+.url-input-bar input:focus { border-color: var(--primary); }
+
+.url-input-bar button {
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--primary);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.url-input-bar button:hover { background: var(--primary-hover); }
+.url-input-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* HTML Viewer (iframe in right panel) */
+.html-viewer-container {
+  flex: 1;
+  overflow: hidden;
+  display: none;
+}
+
+.html-viewer-container iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
 /* Search */
 .search-box {
   padding: 0 16px;
@@ -812,8 +862,13 @@ header .subtitle {
   <aside class="sidebar">
     <div class="upload-zone" id="uploadZone">
       <div class="icon">+</div>
-      <p>📎 Drop PDF here or click to upload</p>
+      <p>Drop PDF here or click to upload</p>
       <input type="file" id="fileInput" accept=".pdf">
+    </div>
+
+    <div class="url-input-bar" id="urlInputBar">
+      <input type="text" id="urlInput" placeholder="Paste URL (PDF or HTML)..." />
+      <button id="urlGoBtn" onclick="submitUrl()">Go</button>
     </div>
 
     <div class="search-box">
@@ -831,7 +886,7 @@ header .subtitle {
       <div>
         <div class="icon">&#128218;</div>
         <h2>Welcome to DeepReading</h2>
-        <p>Upload a PDF paper to generate a structured reading report<br>with extracted figures and AI-powered analysis.</p>
+        <p>Upload a PDF or paste a URL to generate a structured reading report<br>with extracted figures and AI-powered analysis.</p>
       </div>
     </div>
 
@@ -860,6 +915,9 @@ header .subtitle {
             <button onclick="closeRightPanel()" title="Close panel">&times;</button>
           </div>
           <div id="pdfViewerContainer" class="pdf-viewer-container"></div>
+          <div id="htmlViewerContainer" class="html-viewer-container">
+            <iframe id="htmlViewerFrame" sandbox="allow-scripts allow-same-origin"></iframe>
+          </div>
           <div id="discussionView" class="discussion-view">
             <div class="discussion-empty">Discussion will start automatically after report generation.</div>
           </div>
@@ -874,6 +932,7 @@ const $ = (sel) => document.querySelector(sel);
 const API = '/api';
 
 let currentPaperId = null;
+let currentSourceType = 'pdf';
 let isGenerating = false;
 let isDiscussing = false;
 let eventSource = null;
@@ -915,10 +974,44 @@ async function uploadFile(file) {
     showToast(e.message, true);
   } finally {
     uploadZone.classList.remove('uploading');
-    uploadZone.querySelector('p').textContent = '📎 Drop PDF here or click to upload';
+    uploadZone.querySelector('p').textContent = 'Drop PDF here or click to upload';
     fileInput.value = '';
   }
 }
+
+// --- URL Submit ---
+async function submitUrl() {
+  const urlInput = $('#urlInput');
+  const urlBtn = $('#urlGoBtn');
+  const url = urlInput.value.trim();
+  if (!url) { showToast('Please enter a URL', true); return; }
+
+  urlBtn.disabled = true;
+  urlBtn.textContent = '...';
+  try {
+    const res = await fetch(`${API}/papers/upload_url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Failed to fetch URL');
+    const data = await res.json();
+    showToast(`Loaded: ${data.title} (${data.source_type})`);
+    urlInput.value = '';
+    await loadPaperList();
+    selectPaper(data.paper_id);
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    urlBtn.disabled = false;
+    urlBtn.textContent = 'Go';
+  }
+}
+
+// Submit URL on Enter key
+$('#urlInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitUrl();
+});
 
 // --- Paper List ---
 let searchTimer = null;
@@ -943,17 +1036,20 @@ function renderPaperList(papers) {
     list.innerHTML = '<div class="empty-list">No papers found.</div>';
     return;
   }
-  list.innerHTML = papers.map(p => `
+  list.innerHTML = papers.map(p => {
+    const sourceType = p.source_type || 'pdf';
+    const pageLabel = sourceType === 'html' ? 'sections' : 'pages';
+    return `
     <div class="paper-item ${p.id === currentPaperId ? 'active' : ''}"
          data-id="${p.id}" onclick="selectPaper('${p.id}')">
       <div class="info">
         <div class="title">${escapeHtml(p.title || p.filename)}</div>
-        <div class="meta">${p.num_pages} pages &middot; ${p.num_figures} figures &middot; ${formatDate(p.created_at)}</div>
+        <div class="meta">${p.num_pages} ${pageLabel} &middot; ${p.num_figures} figures &middot; ${formatDate(p.created_at)}</div>
       </div>
       ${p.has_report ? '<span class="badge">Report</span>' : ''}
       <button class="delete-btn" onclick="event.stopPropagation(); deletePaper('${p.id}')" title="Delete">&times;</button>
     </div>
-  `).join('');
+  `}).join('');
 }
 
 async function deletePaper(id) {
@@ -1003,19 +1099,27 @@ function showPaperView(paper) {
   $('#welcomeView').style.display = 'none';
   $('#paperView').style.display = 'flex';
 
+  const sourceType = paper.source_type || 'pdf';
+  currentSourceType = sourceType;
+  const pageLabel = sourceType === 'html' ? 'sections' : 'pages';
+  const viewBtnLabel = sourceType === 'html' ? 'View HTML' : 'View PDF';
+  const viewBtnIcon = sourceType === 'html' ? '🌐' : '📄';
+
   // Header
   $('#paperHeader').innerHTML = `
     <h2>${escapeHtml(paper.title)}</h2>
     ${paper.authors ? `<div class="authors">${escapeHtml(paper.authors)}</div>` : ''}
     <div class="stats">
-      <span>${paper.num_pages} pages</span>
+      <span>${paper.num_pages} ${pageLabel}</span>
       <span>${paper.num_figures} figures</span>
-      <span>${escapeHtml(paper.filename)}</span>
+      <span>${escapeHtml(paper.source_url || paper.filename)}</span>
     </div>
   `;
 
   // Actions
   const hasReport = !!paper.report;
+  const tabLabel = sourceType === 'html' ? '🌐 HTML' : '📄 PDF';
+
   $('#actionBar').innerHTML = `
     <button class="btn btn-primary" id="btnGenerate" onclick="generateReport('${paper.id}')"
             ${isGenerating || isDiscussing ? 'disabled' : ''}>
@@ -1025,9 +1129,12 @@ function showPaperView(paper) {
       <option value="en">English</option>
       <option value="zh">中文</option>
     </select>
-    <button class="btn btn-pdf" onclick="openPdfPanel()">📄 View PDF</button>
+    <button class="btn btn-pdf" onclick="openSourcePanel()">${viewBtnIcon} ${viewBtnLabel}</button>
     ${hasReport ? `<a class="btn btn-secondary btn-download" href="${API}/papers/${paper.id}/report" download>⬇ Download .md</a>` : ''}
   `;
+
+  // Update tab label for source type
+  $('#tabPdf').textContent = tabLabel;
 
   // Report
   const rc = $('#reportContent');
@@ -1197,13 +1304,19 @@ function generateReport(paperId) {
         panel.style.display = 'flex';
         switchPanelTab('discussion');
         discView.innerHTML = '';
+        // Pre-load source viewer for citation clicks during discussion
+        if (currentSourceType === 'html') {
+          loadHtmlDocument(currentPaperId);
+        } else if (pdfState.paperId !== currentPaperId) {
+          loadPdfDocument(currentPaperId);
+        }
 
         if (btn) btn.textContent = '💬 Reviewing...';
         break;
       }
       case 'discussion_round': {
-        // Render previous writer message if there was one
-        if (currentMsgEl && currentMsgEl.classList.contains('writer')) {
+        // Render previous completed message (reader or writer)
+        if (currentMsgEl) {
           renderDiscussionMsgBody(currentMsgEl.querySelector('.msg-body'));
         }
         const divider = document.createElement('div');
@@ -1227,6 +1340,10 @@ function generateReport(paperId) {
       }
       case 'writer_chunk': {
         if (!currentMsgEl || !currentMsgEl.classList.contains('writer') || parseInt(currentMsgEl.dataset.round) !== event.round) {
+          // Switching from reader to writer — render the completed reader message
+          if (currentMsgEl && currentMsgEl.classList.contains('reader')) {
+            renderDiscussionMsgBody(currentMsgEl.querySelector('.msg-body'));
+          }
           currentMsgEl = createDiscussionMsg('writer', event.round);
           currentMsgEl.dataset.round = event.round;
           discView.appendChild(currentMsgEl);
@@ -1305,7 +1422,30 @@ function renderMarkdown(rawMarkdown) {
     }
   );
 
-  // Parse markdown (preserves %%CITE_N%% as plain text)
+  // Extract LaTeX math → placeholders before markdown parsing
+  const mathBlocks = [];
+  // Block math \[...\]
+  md = md.replace(/\\\[([\s\S]*?)\\\]/g, (m, tex) => {
+    mathBlocks.push({ tex, display: true });
+    return `%%MATH${mathBlocks.length - 1}%%`;
+  });
+  // Block math $$...$$
+  md = md.replace(/\$\$([\s\S]*?)\$\$/g, (m, tex) => {
+    mathBlocks.push({ tex, display: true });
+    return `%%MATH${mathBlocks.length - 1}%%`;
+  });
+  // Inline math \(...\)
+  md = md.replace(/\\\(([\s\S]*?)\\\)/g, (m, tex) => {
+    mathBlocks.push({ tex, display: false });
+    return `%%MATH${mathBlocks.length - 1}%%`;
+  });
+  // Inline math $...$
+  md = md.replace(/\$([^\$\n]+?)\$/g, (m, tex) => {
+    mathBlocks.push({ tex, display: false });
+    return `%%MATH${mathBlocks.length - 1}%%`;
+  });
+
+  // Parse markdown (preserves %%CITE_N%% and %%MATH_N%% as plain text)
   let html = marked.parse(md);
 
   // Replace placeholders with citation badges
@@ -1316,6 +1456,17 @@ function renderMarkdown(rawMarkdown) {
     const qSafe = c.quote.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
     const quoteAttr = c.quote ? ` data-quote="${qSafe}"` : '';
     return `<span class="citation" data-page="${c.page}"${yAttr}${quoteAttr}>[p.${c.page}]</span>`;
+  });
+
+  // Replace math placeholders with KaTeX-rendered HTML
+  html = html.replace(/%%MATH(\d+)%%/g, (m, idx) => {
+    const mb = mathBlocks[parseInt(idx)];
+    if (!mb) return m;
+    try {
+      return katex.renderToString(mb.tex, { displayMode: mb.display, throwOnError: false });
+    } catch {
+      return mb.display ? `$$${mb.tex}$$` : `$${mb.tex}$`;
+    }
   });
 
   // Convert mermaid code blocks to renderable containers
@@ -1501,6 +1652,14 @@ async function goToPage(page, quote, yNorm) {
   const panel = $('#pdfPanel');
   panel.style.display = 'flex';
   panel.offsetHeight; // force reflow so container has width
+
+  if (currentSourceType === 'html') {
+    switchPanelTab('pdf'); // uses same tab, label changed
+    await loadHtmlDocument(currentPaperId);
+    goToHtmlPosition(page, quote, yNorm);
+    return;
+  }
+
   switchPanelTab('pdf');
 
   if (pdfState.paperId !== currentPaperId) {
@@ -1681,15 +1840,40 @@ async function highlightQuoteOnPage(pageNum, quote) {
   }
 }
 
-async function openPdfPanel() {
+async function openSourcePanel() {
   const panel = $('#pdfPanel');
   panel.style.display = 'flex';
   panel.offsetHeight;
   switchPanelTab('pdf');
 
-  if (pdfState.paperId !== currentPaperId) {
-    await loadPdfDocument(currentPaperId);
+  if (currentSourceType === 'html') {
+    await loadHtmlDocument(currentPaperId);
+  } else {
+    if (pdfState.paperId !== currentPaperId) {
+      await loadPdfDocument(currentPaperId);
+    }
   }
+}
+
+// --- HTML Viewer ---
+let htmlState = { paperId: null };
+
+async function loadHtmlDocument(paperId) {
+  if (htmlState.paperId === paperId) return;
+  htmlState.paperId = paperId;
+  const frame = $('#htmlViewerFrame');
+  frame.src = `${API}/papers/${paperId}/html`;
+}
+
+function goToHtmlPosition(page, quote, yNorm) {
+  const frame = $('#htmlViewerFrame');
+  if (!frame || !frame.contentWindow) return;
+  frame.contentWindow.postMessage({
+    type: 'highlight',
+    page: page,
+    quote: quote || '',
+    yNorm: yNorm,
+  }, '*');
 }
 
 function closeRightPanel() {
@@ -1698,17 +1882,25 @@ function closeRightPanel() {
 
 function switchPanelTab(tab) {
   const pdfContainer = $('#pdfViewerContainer');
+  const htmlContainer = $('#htmlViewerContainer');
   const discView = $('#discussionView');
   const tabPdf = $('#tabPdf');
   const tabDisc = $('#tabDiscussion');
 
   if (tab === 'pdf') {
-    pdfContainer.style.display = 'flex';
+    if (currentSourceType === 'html') {
+      pdfContainer.style.display = 'none';
+      htmlContainer.style.display = 'block';
+    } else {
+      pdfContainer.style.display = 'flex';
+      htmlContainer.style.display = 'none';
+    }
     discView.classList.remove('active');
     tabPdf.classList.add('active');
     tabDisc.classList.remove('active');
   } else {
     pdfContainer.style.display = 'none';
+    htmlContainer.style.display = 'none';
     discView.classList.add('active');
     tabPdf.classList.remove('active');
     tabDisc.classList.add('active');
@@ -1747,9 +1939,19 @@ function renderDiscussionMsgBody(bodyEl) {
 
   // Extract LaTeX blocks before markdown parse
   const mathBlocks = [];
+  // Block math \[...\]
+  md = md.replace(/\\\[([\s\S]*?)\\\]/g, (m, tex) => {
+    mathBlocks.push({ tex, display: true });
+    return `%%MATH${mathBlocks.length - 1}%%`;
+  });
   // Block math $$...$$
   md = md.replace(/\$\$([\s\S]*?)\$\$/g, (m, tex) => {
     mathBlocks.push({ tex, display: true });
+    return `%%MATH${mathBlocks.length - 1}%%`;
+  });
+  // Inline math \(...\)
+  md = md.replace(/\\\(([\s\S]*?)\\\)/g, (m, tex) => {
+    mathBlocks.push({ tex, display: false });
     return `%%MATH${mathBlocks.length - 1}%%`;
   });
   // Inline math $...$

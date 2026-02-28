@@ -11,8 +11,13 @@ from database import update_report, update_discussion
 from pdf_tools import (
     PdfToolContext,
     TOOL_SCHEMAS,
-    execute_tool,
-    locate_quote,
+    execute_tool as pdf_execute_tool,
+    locate_quote as pdf_locate_quote,
+)
+from html_tools import (
+    HtmlToolContext,
+    execute_tool as html_execute_tool,
+    locate_quote as html_locate_quote,
 )
 from code_executor import execute_html_figure
 from figure_reviewer import review_figure
@@ -260,7 +265,7 @@ def _postprocess_citations(report: str, full_text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _enhance_citations_with_positions(report: str, pdf_path: str) -> str:
-    """Add y-positions to citations that lack them."""
+    """Add y-positions to citations that lack them (PDF mode)."""
     # Match [[p.N "quote"]] without :Y
     pattern = re.compile(r'\[\[p\.(\d+)\s+"([^"]+)"\]\]')
 
@@ -273,7 +278,7 @@ def _enhance_citations_with_positions(report: str, pdf_path: str) -> str:
             def replacer(match):
                 page = int(match.group(1))
                 quote = match.group(2)
-                result = locate_quote(ctx, quote, page_hint=page)
+                result = pdf_locate_quote(ctx, quote, page_hint=page)
                 if result.get("found") and "y" in result:
                     return f'[[p.{result["page"]}:{result["y"]} "{quote}"]]'
                 return match.group(0)
@@ -281,6 +286,29 @@ def _enhance_citations_with_positions(report: str, pdf_path: str) -> str:
             return pattern.sub(replacer, report)
     except Exception:
         return report  # if PDF can't be opened, leave as-is
+
+
+def _enhance_citations_html(report: str, full_text: str) -> str:
+    """Add y-positions to citations that lack them (HTML mode)."""
+    pattern = re.compile(r'\[\[p\.(\d+)\s+"([^"]+)"\]\]')
+
+    if not pattern.search(report):
+        return report
+
+    try:
+        ctx = HtmlToolContext(full_text)
+
+        def replacer(match):
+            page = int(match.group(1))
+            quote = match.group(2)
+            result = html_locate_quote(ctx, quote, page_hint=page)
+            if result.get("found") and "y" in result:
+                return f'[[p.{result["page"]}:{result["y"]} "{quote}"]]'
+            return match.group(0)
+
+        return pattern.sub(replacer, report)
+    except Exception:
+        return report
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +324,11 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
     """
     user_prompt = _build_user_prompt(paper, figures)
     lang_inst = LANG_INSTRUCTIONS.get(lang, LANG_INSTRUCTIONS["en"])
+    source_type = paper.get("source_type", "pdf")
+
     system = SYSTEM_PROMPT + f"\n\nLanguage requirement: {lang_inst}"
+    if source_type == "html":
+        system += "\n\nNote: This paper was loaded from an HTML page. Page numbers refer to virtual content sections, not physical PDF pages."
 
     pdf_path = str(
         Path(__file__).parent / "data" / "uploads" / f"{paper['id']}.pdf"
@@ -309,7 +341,15 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
 
     full_report: list[str] = []
 
-    with PdfToolContext(pdf_path) as ctx:
+    # Create the appropriate tool context
+    if source_type == "html":
+        tool_ctx = HtmlToolContext(paper.get("full_text", ""))
+        exec_tool = html_execute_tool
+    else:
+        tool_ctx = PdfToolContext(pdf_path)
+        exec_tool = pdf_execute_tool
+
+    try:
         for _round in range(MAX_TOOL_ROUNDS):
             stream = await client.chat.completions.create(
                 model=REPORT_MODEL,
@@ -431,7 +471,7 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
                                 "Please fix the issues and call generate_figure again."
                             )
                 else:
-                    result = execute_tool(ctx, tool_name, arguments)
+                    result = exec_tool(tool_ctx, tool_name, arguments)
                 result_str = json.dumps(result, ensure_ascii=False)
 
                 # Truncate large results
@@ -443,16 +483,23 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
                     "tool_call_id": tc_msg["id"],
                     "content": result_str,
                 })
+    finally:
+        if hasattr(tool_ctx, "close"):
+            tool_ctx.close()
 
     # Post-processing
     report_text = "".join(full_report)
     if report_text.strip():
         yield _make_status("Enhancing citations...")
 
-        # Run blocking PDF operations in a thread to avoid blocking the event loop
-        enhanced = await asyncio.to_thread(
-            _enhance_citations_with_positions, report_text, pdf_path
-        )
+        if source_type == "html":
+            enhanced = await asyncio.to_thread(
+                _enhance_citations_html, report_text, paper.get("full_text", "")
+            )
+        else:
+            enhanced = await asyncio.to_thread(
+                _enhance_citations_with_positions, report_text, pdf_path
+            )
 
         # 2. Fallback: inject citations if LLM didn't produce any
         if not re.search(r"\[\[p\.\d+", enhanced):
@@ -640,10 +687,16 @@ async def generate_discussion_stream(paper: dict, figures: list[dict], report: s
     polished_report = "".join(polished_chunks)
 
     # Post-process polished report (non-blocking)
-    pdf_path = str(Path(__file__).parent / "data" / "uploads" / f"{paper['id']}.pdf")
-    polished_report = await asyncio.to_thread(
-        _enhance_citations_with_positions, polished_report, pdf_path
-    )
+    source_type = paper.get("source_type", "pdf")
+    if source_type == "html":
+        polished_report = await asyncio.to_thread(
+            _enhance_citations_html, polished_report, paper.get("full_text", "")
+        )
+    else:
+        pdf_path = str(Path(__file__).parent / "data" / "uploads" / f"{paper['id']}.pdf")
+        polished_report = await asyncio.to_thread(
+            _enhance_citations_with_positions, polished_report, pdf_path
+        )
     if not re.search(r"\[\[p\.\d+", polished_report):
         polished_report = _postprocess_citations(polished_report, paper.get("full_text", ""))
 
