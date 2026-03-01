@@ -1267,9 +1267,11 @@ function generateReport(paperId) {
   };
 
   eventSource.onerror = () => {
-    // Don't kill connection if we have data — SSE may recover on its own.
-    // Only close if we never received anything (true connection failure).
-    if (!markdown && !inDiscussion) {
+    // Only treat as fatal if we received absolutely nothing yet
+    // (markdown empty AND no thinking steps = true connection failure at startup).
+    // During tool-call phase markdown stays empty but thinkingSteps accumulate —
+    // in that case let SSE reconnect naturally instead of cancelling.
+    if (!markdown && !inDiscussion && thinkingSteps.length === 0) {
       eventSource.close();
       isGenerating = false;
       isDiscussing = false;
@@ -1293,11 +1295,9 @@ function generateReport(paperId) {
         rc.innerHTML = renderMarkdown(finalMarkdown);
         renderMermaidDiagrams();
 
-        // Collapse thinking panel
+        // Update thinking panel to show review phase
         $('#thinkingDot').style.display = 'none';
         $('#thinkingTitle').textContent = `Report done (${thinkingSteps.length} tool calls). Starting review...`;
-        $('#thinkingToggle').classList.remove('open');
-        $('#thinkingBody').style.display = 'none';
 
         // Open right panel with Discussion tab
         const panel = $('#pdfPanel');
@@ -1415,7 +1415,7 @@ function renderMarkdown(rawMarkdown) {
   // Extract citations → placeholders before markdown parsing
   const cites = [];
   md = md.replace(
-    /\[\[p\.(\d+)(?::(\d+))?\s*(?:"([^"]*)")?\s*\]\]/g,
+    /\[\[p\.(\d+)(?::(\d+))?\s*(?:[\u201C"]([^\u201D"]*)[\u201D"](?:\s+[\u201C"][^\u201D"]*[\u201D"])*)?\s*\]\]/g,
     (match, page, yPos, quote) => {
       cites.push({ page, yPos: yPos || null, quote: quote || '' });
       return `%%CITE${cites.length - 1}%%`;
@@ -1562,7 +1562,9 @@ document.getElementById('discussionView').addEventListener('click', (e) => {
 });
 
 // --- PDF Viewer (pdf.js) ---
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
 
 const pdfState = {
   doc: null,
@@ -1930,7 +1932,7 @@ function renderDiscussionMsgBody(bodyEl) {
   // Extract citations before markdown parse
   const cites = [];
   let md = raw.replace(
-    /\[\[p\.(\d+)(?::(\d+))?\s*(?:"([^"]*)")?\s*\]\]/g,
+    /\[\[p\.(\d+)(?::(\d+))?\s*(?:[\u201C"]([^\u201D"]*)[\u201D"])?\s*\]\]/g,
     (match, page, yPos, quote) => {
       cites.push({ page, yPos: yPos || null, quote: quote || '' });
       return `%%CITE${cites.length - 1}%%`;
@@ -2044,27 +2046,31 @@ function showToast(msg, isError = false) {
 }
 
 // Init
-mermaid.initialize({
-  startOnLoad: false,
-  securityLevel: 'loose',
-  theme: 'base',
-  themeVariables: {
-    primaryColor: '#e0f2fe',
-    primaryTextColor: '#1e293b',
-    primaryBorderColor: '#7dd3fc',
-    secondaryColor: '#fef3c7',
-    secondaryTextColor: '#1e293b',
-    secondaryBorderColor: '#fcd34d',
-    tertiaryColor: '#e0e7ff',
-    tertiaryBorderColor: '#a5b4fc',
-    lineColor: '#64748b',
-    textColor: '#334155',
-    fontSize: '14px',
-    fontFamily: 'system-ui, -apple-system, "Noto Sans CJK SC", sans-serif',
-    nodeTextColor: '#1e293b',
-  },
-  flowchart: { curve: 'basis', padding: 16, nodeSpacing: 50, rankSpacing: 60 },
-});
+try {
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'loose',
+    theme: 'base',
+    themeVariables: {
+      primaryColor: '#e0f2fe',
+      primaryTextColor: '#1e293b',
+      primaryBorderColor: '#7dd3fc',
+      secondaryColor: '#fef3c7',
+      secondaryTextColor: '#1e293b',
+      secondaryBorderColor: '#fcd34d',
+      tertiaryColor: '#e0e7ff',
+      tertiaryBorderColor: '#a5b4fc',
+      lineColor: '#64748b',
+      textColor: '#334155',
+      fontSize: '14px',
+      fontFamily: 'system-ui, -apple-system, "Noto Sans CJK SC", sans-serif',
+      nodeTextColor: '#1e293b',
+    },
+    flowchart: { curve: 'basis', padding: 16, nodeSpacing: 50, rankSpacing: 60 },
+  });
+} catch (e) {
+  console.warn('Mermaid not available:', e);
+}
 loadPaperList();
 </script>
 </body>

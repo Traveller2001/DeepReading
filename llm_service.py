@@ -207,6 +207,27 @@ def _build_user_prompt(paper: dict, figures: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Normalize curly/typographic quotes in citations to ASCII quotes
+# ---------------------------------------------------------------------------
+
+def _normalize_citation_quotes(text: str) -> str:
+    """Normalize citation format inside [[p.N ...]] brackets:
+    1. Convert curly/typographic quotes to ASCII quotes.
+    2. Collapse multiple quoted strings to just the first
+       e.g. [[p.2 "q1" "q2"]] → [[p.2 "q1"]]
+    """
+    def fix(m):
+        s = m.group(0)
+        # 1. Curly quotes → ASCII
+        s = (s.replace('\u201C', '"').replace('\u201D', '"')
+              .replace('\u2018', "'").replace('\u2019', "'"))
+        # 2. Collapse extra quoted strings after the first
+        s = re.sub(r'("(?:[^"]*)")(\s+"[^"]*")+(\]\])', r'\1\3', s)
+        return s
+    return re.sub(r'\[\[p\.[^\]]*?\]\]', fix, text)
+
+
+# ---------------------------------------------------------------------------
 # Fallback: inject citations if LLM didn't produce them
 # ---------------------------------------------------------------------------
 
@@ -487,8 +508,37 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
         if hasattr(tool_ctx, "close"):
             tool_ctx.close()
 
+    # Fallback: if all tool-call rounds were exhausted without producing report text,
+    # make one final call WITHOUT tools to force the model to write the report.
+    if not "".join(full_report).strip():
+        yield _make_status("Writing report...")
+        messages.append({
+            "role": "user",
+            "content": (
+                "You have thoroughly analyzed the paper. "
+                "Now write the complete report. "
+                "Start directly with ## TLDR — no preamble."
+            ),
+        })
+        try:
+            final_stream = await client.chat.completions.create(
+                model=REPORT_MODEL,
+                messages=messages,
+                temperature=TEMPERATURE,
+                stream=True,
+            )
+            async for chunk in final_stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    full_report.append(delta.content)
+                    yield delta.content
+        except Exception:
+            pass
+
     # Post-processing
-    report_text = "".join(full_report)
+    report_text = _normalize_citation_quotes("".join(full_report))
     if report_text.strip():
         yield _make_status("Enhancing citations...")
 
@@ -684,7 +734,7 @@ async def generate_discussion_stream(paper: dict, figures: list[dict], report: s
         polished_chunks.append(chunk)
         yield {"type": "polish_chunk", "content": chunk}
 
-    polished_report = "".join(polished_chunks)
+    polished_report = _normalize_citation_quotes("".join(polished_chunks))
 
     # Post-process polished report (non-blocking)
     source_type = paper.get("source_type", "pdf")

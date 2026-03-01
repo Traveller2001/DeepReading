@@ -44,6 +44,15 @@ def fetch_url(url: str) -> tuple[str, bytes]:
     """
     parsed = urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
+    netloc = parsed.netloc.lower()
+
+    # Use domain-appropriate Referer
+    if "weixin.qq.com" in netloc or "mp.weixin.qq.com" in netloc:
+        referer = "https://mp.weixin.qq.com/"
+    elif "zhihu.com" in netloc:
+        referer = "https://www.zhihu.com/"
+    else:
+        referer = "https://www.google.com/"
 
     session = requests.Session()
     session.headers.update({
@@ -58,13 +67,18 @@ def fetch_url(url: str) -> tuple[str, bytes]:
         ),
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
-        "Referer": "https://www.google.com/",
+        "Referer": referer,
     })
 
     # First request: may fail (403) but sets cookies needed for second try
     resp = session.get(url, timeout=60, allow_redirects=True)
 
-    if resp.status_code == 403:
+    if resp.status_code == 403 or (
+        resp.status_code == 200
+        and "zhihu.com" in netloc
+        and len(resp.content) < 5000
+        and b"js_unavailable" in resp.content
+    ):
         # Some sites set a challenge cookie on first visit; retry with cookies
         # Try hitting the origin first to get cookies, then the actual URL
         try:
@@ -106,8 +120,16 @@ def detect_content_type(url: str, content_type: str, body: bytes) -> str:
 
 def _extract_main_content(soup: BeautifulSoup) -> BeautifulSoup:
     """Find the main article content element."""
-    # Try common academic paper containers
+    # Try common academic paper containers (ordered most-specific first)
     for selector in [
+        # WeChat public account articles
+        "#js_content",
+        ".rich_media_content",
+        # Zhihu articles
+        ".Post-RichTextContainer",
+        ".RichText.ztext",
+        ".Post-RichText",
+        # Generic academic / blog
         "article",
         ".ltx_document",
         ".ltx_page_main",
@@ -125,6 +147,20 @@ def _extract_main_content(soup: BeautifulSoup) -> BeautifulSoup:
 
 def _extract_title(soup: BeautifulSoup) -> str:
     """Extract paper title from HTML."""
+    # WeChat public account title
+    wechat_title = soup.select_one(".rich_media_title, #activity-name")
+    if wechat_title:
+        t = wechat_title.get_text(strip=True)
+        if t:
+            return t[:300]
+
+    # Zhihu article title
+    zhihu_title = soup.select_one(".Post-Title, .ContentItem-title")
+    if zhihu_title:
+        t = zhihu_title.get_text(strip=True)
+        if t:
+            return t[:300]
+
     # Try <h1> first
     h1 = soup.find("h1")
     if h1 and len(h1.get_text(strip=True)) > 3:
@@ -149,6 +185,22 @@ def _extract_title(soup: BeautifulSoup) -> str:
 def _extract_authors(soup: BeautifulSoup) -> str:
     """Extract authors from meta tags or author elements."""
     authors = []
+
+    # WeChat public account author/source
+    wechat_author = soup.select_one(
+        ".rich_media_meta_nickname, #js_name, .rich_media_meta_text"
+    )
+    if wechat_author:
+        t = wechat_author.get_text(strip=True)
+        if t:
+            return t[:200]
+
+    # Zhihu author
+    zhihu_author = soup.select_one(".AuthorInfo-name, .UserLink-link")
+    if zhihu_author:
+        t = zhihu_author.get_text(strip=True)
+        if t:
+            return t[:200]
 
     # Meta tags
     for meta in soup.find_all("meta"):
@@ -257,6 +309,16 @@ def _truncate_text(text: str) -> str:
 # Figure Extraction
 # ---------------------------------------------------------------------------
 
+def _get_img_src(img) -> str:
+    """Get the real image URL, handling lazy-load data-src attributes."""
+    # Many sites (WeChat, Zhihu, etc.) lazy-load images via data-src
+    for attr in ["data-src", "data-original", "data-lazy-src", "src"]:
+        val = img.get(attr, "").strip()
+        if val and not val.startswith("data:"):
+            return val
+    return ""
+
+
 def _extract_figures(soup: BeautifulSoup, base_url: str, fig_dir: Path) -> list[dict]:
     """Extract figures from HTML: download images and collect captions."""
     figures = []
@@ -266,13 +328,16 @@ def _extract_figures(soup: BeautifulSoup, base_url: str, fig_dir: Path) -> list[
     # Look for <figure> elements
     for fig_el in soup.find_all("figure"):
         img = fig_el.find("img")
-        if not img or not img.get("src"):
+        if not img:
+            continue
+        src = _get_img_src(img)
+        if not src:
             continue
 
         caption_el = fig_el.find("figcaption")
         caption = caption_el.get_text(strip=True)[:200] if caption_el else ""
 
-        img_url = urljoin(base_url, img["src"])
+        img_url = urljoin(base_url, src)
         fig_idx += 1
         filename = f"fig_{fig_idx}.png"
 
@@ -291,16 +356,16 @@ def _extract_figures(soup: BeautifulSoup, base_url: str, fig_dir: Path) -> list[
         except Exception:
             continue
 
-    # Also look for standalone <img> with alt text if no <figure> found
+    # Also look for standalone <img> with meaningful alt/data-src if no <figure> found
     if not figures:
         for img in soup.find_all("img"):
-            src = img.get("src", "")
+            src = _get_img_src(img)
             alt = img.get("alt", "")
             if not src or len(alt) < 3:
                 continue
             # Skip tiny icons/decorations
             width = img.get("width", "")
-            if width and width.isdigit() and int(width) < 50:
+            if width and str(width).isdigit() and int(width) < 50:
                 continue
 
             img_url = urljoin(base_url, src)
@@ -540,8 +605,31 @@ def _build_clean_html(
     for comment in doc.find_all(string=lambda t: isinstance(t, Comment)):
         comment.extract()
 
-    # 2. Convert relative URLs to absolute for all resource types
+    # 2. Un-hide JS-revealed content: remove inline visibility:hidden / display:none
+    # WeChat sets #js_content { visibility: hidden } and JS removes it.
+    # Since we strip scripts, we force-reveal any element hidden this way
+    # that actually contains text content.
+    for tag in doc.find_all(attrs={"style": True}):
+        style = tag.get("style", "")
+        new_style = style
+        if re.search(r'visibility\s*:\s*hidden', style, re.I):
+            new_style = re.sub(r'visibility\s*:\s*hidden', 'visibility:visible', new_style, flags=re.I)
+        if re.search(r'display\s*:\s*none', new_style, re.I):
+            # Only un-hide if the element has substantial text (avoids menus etc.)
+            if len(tag.get_text(strip=True)) > 100:
+                new_style = re.sub(r'display\s*:\s*none', 'display:block', new_style, flags=re.I)
+        if new_style != style:
+            tag["style"] = new_style
+
+    # 3. Convert relative URLs to absolute for all resource types
     for tag in doc.find_all(["img", "a", "link", "source", "video", "audio"]):
+        # Promote data-src / data-original (lazy-load) to src for images
+        if tag.name == "img":
+            for lazy_attr in ["data-src", "data-original", "data-lazy-src"]:
+                lazy_val = tag.get(lazy_attr, "").strip()
+                if lazy_val and not lazy_val.startswith("data:"):
+                    tag["src"] = lazy_val
+                    break
         for attr in ["src", "href", "poster"]:
             val = tag.get(attr)
             if val and not val.startswith(("http://", "https://", "data:", "#", "javascript:")):
@@ -569,7 +657,7 @@ def _build_clean_html(
                 return f"url('{url_val}')"
             tag["style"] = re.sub(r"url\(([^)]+)\)", _fix_css_url, style)
 
-    # 3. Inject <base> tag so any remaining relative URLs resolve correctly
+    # 4. Inject <base> tag so any remaining relative URLs resolve correctly
     head = doc.find("head")
     if head:
         # Remove existing <base> if any
@@ -585,7 +673,7 @@ def _build_clean_html(
             head.append(doc.new_tag("base", href=base_url))
             html_tag.insert(0, head)
 
-    # 4. Inject scripts before </body>
+    # 5. Inject scripts before </body>
     body = doc.find("body")
     if body:
         # Inject MathJax if the page has LaTeX math
