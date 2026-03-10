@@ -1,39 +1,49 @@
 import asyncio
 import json
-import os
+import logging
 import re
-from pathlib import Path
 
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
+logger = logging.getLogger(__name__)
 
-from database import update_report, update_discussion
-from pdf_tools import (
+from llm_client import generate_stream, StreamChunk
+from core.database import update_report, update_discussion
+from tools.pdf_tools import (
     PdfToolContext,
     TOOL_SCHEMAS,
     execute_tool as pdf_execute_tool,
     locate_quote as pdf_locate_quote,
 )
-from html_tools import (
+from tools.html_tools import (
     HtmlToolContext,
     execute_tool as html_execute_tool,
     locate_quote as html_locate_quote,
 )
-from code_executor import execute_html_figure
-from figure_reviewer import review_figure
-
-load_dotenv()
-
-client = AsyncOpenAI(
-    base_url=os.environ.get("LLM_API_BASE", "https://api.deepseek.com"),
-    api_key=os.environ.get("LLM_API_KEY", ""),
+from tools.code_executor import execute_html_figure
+from tools.figure_reviewer import review_figure
+from config import (
+    LLM_MODEL as MODEL, REPORT_MODEL,
+    LLM_TEMPERATURE as TEMPERATURE,
+    MAX_REPORT_TOKENS, MAX_TOOL_ROUNDS,
+    MAX_TOOL_RESULT_LEN, MAX_CONTINUATIONS,
+    BASE_DIR, DATA_DIR,
+    LLM_TIMEOUT,
 )
 
-MODEL = os.environ.get("LLM_MODEL", "deepseek-chat")
-REPORT_MODEL = os.environ.get("REPORT_MODEL", MODEL)
-TEMPERATURE = 0.7
-MAX_TOOL_ROUNDS = 25  # safety limit to prevent infinite tool-call loops
-MAX_TOOL_RESULT_LEN = 8000  # truncate large tool results
+# Required sections to consider a report complete
+_REQUIRED_SECTIONS = ["## experiment", "## conclusion"]
+
+# Per-chunk stall timeout: if no chunk arrives within this many seconds,
+# abort the stream (protects against API hangs or malformed responses).
+_STREAM_STALL_TIMEOUT = LLM_TIMEOUT
+
+
+def _report_is_incomplete(report_text: str) -> bool:
+    """Check if report is missing required sections."""
+    lower = report_text.lower()
+    # Must have TLDR to be considered a real report
+    if "## tldr" not in lower:
+        return False  # not a report at all, don't try to continue
+    return any(s not in lower for s in _REQUIRED_SECTIONS)
 
 # ---------------------------------------------------------------------------
 # Status message helpers (embedded in stream as HTML comments)
@@ -79,12 +89,13 @@ Before writing anything, deeply investigate the paper:
 
 ## Phase 3 — Write the Report
 Only after thorough investigation, write the full report with precise citations.
-Actively consider which concepts would benefit from a mermaid diagram to aid understanding — for example:
+Actively consider which concepts would benefit from an explanatory diagram (via generate_figure tool) — for example:
 - The overall model architecture or system pipeline
 - Multi-stage training or inference workflows
 - The relationship between key components (e.g., attention, routing, experts)
 - Data flow or processing steps
-Include at least one mermaid diagram in the Method section to visually explain the core approach.
+Include at least one diagram in the Method section to visually explain the core approach.
+IMPORTANT: Do NOT write ```mermaid code blocks. Use the generate_figure() tool instead — it produces higher quality diagrams.
 
 AVAILABLE TOOLS:
 - get_paper_structure(): Get section headings with page numbers and y-positions
@@ -189,10 +200,12 @@ def _build_user_prompt(paper: dict, figures: list[dict]) -> str:
         )
         for fig in figures:
             caption = fig.get("caption", "")
-            parts.append(
-                f"- {caption} (page {fig['page_num'] + 1})\n"
-                f"  Syntax: ![{caption}](/data/figures/{paper['id']}/{fig['filename']})"
-            )
+            desc = fig.get("description", "")
+            entry = f"- {caption} (page {fig['page_num'] + 1})"
+            if desc:
+                entry += f"\n  Vision description: {desc}"
+            entry += f"\n  Syntax: ![{caption}](/data/figures/{paper['id']}/{fig['filename']})"
+            parts.append(entry)
     else:
         parts.append("\n(No figures were extracted from this paper.)")
 
@@ -212,19 +225,22 @@ def _build_user_prompt(paper: dict, figures: list[dict]) -> str:
 
 def _normalize_citation_quotes(text: str) -> str:
     """Normalize citation format inside [[p.N ...]] brackets:
-    1. Convert curly/typographic quotes to ASCII quotes.
-    2. Collapse multiple quoted strings to just the first
+    1. Remove stray whitespace after 'p.' so [[p. 2 ...]] → [[p.2 ...]]
+    2. Convert curly/typographic quotes to ASCII quotes.
+    3. Collapse multiple quoted strings to just the first
        e.g. [[p.2 "q1" "q2"]] → [[p.2 "q1"]]
     """
     def fix(m):
         s = m.group(0)
-        # 1. Curly quotes → ASCII
+        # 1. Normalize spacing: [[p. 2 → [[p.2
+        s = re.sub(r'\[\[p\.\s+', '[[p.', s)
+        # 2. Curly quotes → ASCII
         s = (s.replace('\u201C', '"').replace('\u201D', '"')
               .replace('\u2018', "'").replace('\u2019', "'"))
-        # 2. Collapse extra quoted strings after the first
+        # 3. Collapse extra quoted strings after the first
         s = re.sub(r'("(?:[^"]*)")(\s+"[^"]*")+(\]\])', r'\1\3', s)
         return s
-    return re.sub(r'\[\[p\.[^\]]*?\]\]', fix, text)
+    return re.sub(r'\[\[p\.\s*[^\]]*?\]\]', fix, text)
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +249,7 @@ def _normalize_citation_quotes(text: str) -> str:
 
 def _postprocess_citations(report: str, full_text: str) -> str:
     """If the LLM failed to produce [[p.N]] citations at all, inject them."""
-    if re.search(r"\[\[p\.\d+", report):
-        return report  # citations already present
+    if re.search(r"\[\[p\.\s*\d+", report):        return report  # citations already present
 
     page_markers = list(re.finditer(r"--- Page (\d+) ---", full_text))
     if not page_markers:
@@ -351,9 +366,7 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
     if source_type == "html":
         system += "\n\nNote: This paper was loaded from an HTML page. Page numbers refer to virtual content sections, not physical PDF pages."
 
-    pdf_path = str(
-        Path(__file__).parent / "data" / "uploads" / f"{paper['id']}.pdf"
-    )
+    pdf_path = str(DATA_DIR / "uploads" / f"{paper['id']}.pdf")
 
     messages: list[dict] = [
         {"role": "system", "content": system},
@@ -372,58 +385,136 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
 
     try:
         for _round in range(MAX_TOOL_ROUNDS):
-            stream = await client.chat.completions.create(
-                model=REPORT_MODEL,
-                messages=messages,
-                tools=TOOL_SCHEMAS,
-                temperature=TEMPERATURE,
-                stream=True,
-            )
-
             text_chunks: list[str] = []
             reasoning_chunks: list[str] = []
             tool_calls_acc: dict[int, dict] = {}
             finish_reason = None
 
-            async for chunk in stream:
-                if not chunk.choices:
-                    continue
-                choice = chunk.choices[0]
-                delta = choice.delta
-                if choice.finish_reason:
-                    finish_reason = choice.finish_reason
+            try:
+                stream = generate_stream(
+                    messages,
+                    model=REPORT_MODEL,
+                    tools=TOOL_SCHEMAS,
+                    temperature=TEMPERATURE,
+                    max_tokens=MAX_REPORT_TOKENS,
+                )
+                ait = stream.__aiter__()
+                while True:
+                    try:
+                        sc = await asyncio.wait_for(ait.__anext__(), timeout=_STREAM_STALL_TIMEOUT)
+                    except StopAsyncIteration:
+                        break
 
-                # Capture reasoning_content (deepseek-reasoner)
-                rc = getattr(delta, "reasoning_content", None)
-                if rc:
-                    reasoning_chunks.append(rc)
+                    if sc.finish_reason:
+                        finish_reason = sc.finish_reason
 
-                # Stream text content to client in real time
-                if delta.content:
-                    text_chunks.append(delta.content)
-                    full_report.append(delta.content)
-                    yield delta.content
+                    if sc.reasoning:
+                        reasoning_chunks.append(sc.reasoning)
 
-                # Accumulate tool calls from streamed deltas
-                if delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        idx = tc.index
-                        if idx not in tool_calls_acc:
-                            tool_calls_acc[idx] = {
-                                "id": tc.id or "",
-                                "name": "",
-                                "arguments": "",
-                            }
-                        if tc.id:
-                            tool_calls_acc[idx]["id"] = tc.id
-                        if tc.function:
-                            if tc.function.name:
-                                tool_calls_acc[idx]["name"] = tc.function.name
-                            if tc.function.arguments:
-                                tool_calls_acc[idx]["arguments"] += tc.function.arguments
+                    if sc.content:
+                        text_chunks.append(sc.content)
+                        full_report.append(sc.content)
+                        yield sc.content
+
+                    if sc.tool_calls:
+                        for tcd in sc.tool_calls:
+                            idx = tcd.index
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {
+                                    "id": "",
+                                    "name": "",
+                                    "arguments": "",
+                                }
+                            if tcd.id:
+                                tool_calls_acc[idx]["id"] = tcd.id
+                            if tcd.name:
+                                tool_calls_acc[idx]["name"] = tcd.name
+                            if tcd.arguments:
+                                tool_calls_acc[idx]["arguments"] += tcd.arguments
+            except asyncio.TimeoutError:
+                logger.error("Round %d: stream stalled for %ds, aborting round", _round, _STREAM_STALL_TIMEOUT)
+            except Exception as e:
+                logger.error("Round %d: streaming error: %s", _round, e)
 
             # If model finished without requesting tools, we're done
             if finish_reason != "tool_calls" or not tool_calls_acc:
+                report_so_far = "".join(text_chunks)
+                logger.info(
+                    "Report generation round %d ended: finish_reason=%s, "
+                    "text_len=%d chars, tool_calls=%d, last_50_chars=%r",
+                    _round, finish_reason, len(report_so_far),
+                    len(tool_calls_acc), report_so_far[-50:] if report_so_far else "",
+                )
+                # Handle truncation: either explicit length limit or incomplete content
+                needs_continue = (
+                    (finish_reason == "length" and text_chunks)
+                    or (text_chunks and _report_is_incomplete("".join(full_report)))
+                )
+                if needs_continue:
+                    logger.info("Report incomplete (finish_reason=%s), auto-continuing...", finish_reason)
+                    report_so_far = "".join(full_report)
+                    # Use lightweight context for continuation: no full paper text,
+                    # so the model has room to generate the remaining sections.
+                    paper_excerpt = paper.get("full_text", "")
+                    if len(paper_excerpt) > MAX_PAPER_TEXT_LEN:
+                        paper_excerpt = paper_excerpt[:MAX_PAPER_TEXT_LEN] + "\n\n... (truncated)"
+                    cont_messages: list[dict] = [
+                        {"role": "system", "content": (
+                            "You are writing an academic paper reading report. "
+                            "Maintain the same style, language, and [[p.N \"quote\"]] citation format.\n\n"
+                            f"Language requirement: {lang_inst}"
+                        )},
+                        {"role": "user", "content": (
+                            f"Paper text (for reference):\n{paper_excerpt}\n\n"
+                            "Write a detailed reading report for this paper."
+                        )},
+                        {"role": "assistant", "content": report_so_far},
+                        {"role": "user", "content": (
+                            "Your report was cut off. Continue writing from EXACTLY where you stopped. "
+                            "Do NOT repeat any content already written. "
+                            "Complete all remaining sections including ## Experiments and ## Conclusion."
+                        )},
+                    ]
+                    yield _make_status("Continuing report generation...")
+                    for _cont in range(MAX_CONTINUATIONS):
+                        try:
+                            cont_chunks: list[str] = []
+                            cont_finish = None
+                            async for sc in generate_stream(
+                                cont_messages,
+                                model=REPORT_MODEL,
+                                temperature=TEMPERATURE,
+                                max_tokens=16384,
+                            ):
+                                if sc.finish_reason:
+                                    cont_finish = sc.finish_reason
+                                if sc.content:
+                                    cont_chunks.append(sc.content)
+                                    full_report.append(sc.content)
+                                    yield sc.content
+                        except Exception as e:
+                            logger.error("Continuation %d API call failed: %s", _cont + 1, e)
+                            break
+                        logger.info(
+                            "Continuation %d ended: finish_reason=%s, chunk_len=%d",
+                            _cont + 1, cont_finish, len("".join(cont_chunks)),
+                        )
+                        if not cont_chunks:
+                            logger.warning("Continuation %d produced no content, giving up", _cont + 1)
+                            break
+                        if not _report_is_incomplete("".join(full_report)):
+                            break
+                        # Rebuild with accumulated report in assistant role
+                        accumulated = "".join(full_report)
+                        cont_messages = [
+                            cont_messages[0],  # system prompt
+                            cont_messages[1],  # user: paper text
+                            {"role": "assistant", "content": accumulated},
+                            {"role": "user", "content": (
+                                "Your report was cut off. Continue from EXACTLY where you stopped. "
+                                "Do NOT repeat any content already written."
+                            )},
+                        ]
                 break
 
             # Tool-calling round: remove any intermediate text from report
@@ -434,7 +525,6 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
             assistant_tool_calls = []
             for idx in sorted(tool_calls_acc.keys()):
                 tc = tool_calls_acc[idx]
-                # Some APIs return empty tool_call_id; generate one if missing
                 tc_id = tc["id"] or f"call_{_round}_{idx}"
                 assistant_tool_calls.append({
                     "id": tc_id,
@@ -450,7 +540,6 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
                 assistant_msg["content"] = "".join(text_chunks)
             else:
                 assistant_msg["content"] = ""
-            # Only include reasoning_content if present (DeepSeek-specific)
             if reasoning_chunks:
                 assistant_msg["reasoning_content"] = "".join(reasoning_chunks)
             messages.append(assistant_msg)
@@ -463,21 +552,18 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
                 except json.JSONDecodeError:
                     arguments = {}
 
-                # Send status to frontend
                 status_text = _tool_status_message(tool_name, arguments)
                 yield _make_status(status_text)
 
-                # Execute tool
                 if tool_name == "generate_figure":
                     result = execute_html_figure(
                         code=arguments.get("code", ""),
                         paper_id=paper["id"],
                         fig_name=arguments.get("description", "figure"),
                     )
-                    # Vision review: check generated figure quality
                     if result.get("success") and result.get("path"):
                         abs_path = str(
-                            Path(__file__).parent / result["path"].lstrip("/")
+                            BASE_DIR / result["path"].lstrip("/")
                         )
                         yield _make_status("Reviewing figure quality...")
                         review = review_figure(
@@ -495,7 +581,6 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
                     result = exec_tool(tool_ctx, tool_name, arguments)
                 result_str = json.dumps(result, ensure_ascii=False)
 
-                # Truncate large results
                 if len(result_str) > MAX_TOOL_RESULT_LEN:
                     result_str = result_str[:MAX_TOOL_RESULT_LEN] + "... (truncated)"
 
@@ -521,19 +606,15 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
             ),
         })
         try:
-            final_stream = await client.chat.completions.create(
+            async for sc in generate_stream(
+                messages,
                 model=REPORT_MODEL,
-                messages=messages,
                 temperature=TEMPERATURE,
-                stream=True,
-            )
-            async for chunk in final_stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    full_report.append(delta.content)
-                    yield delta.content
+                max_tokens=MAX_REPORT_TOKENS,
+            ):
+                if sc.content:
+                    full_report.append(sc.content)
+                    yield sc.content
         except Exception:
             pass
 
@@ -551,8 +632,7 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
                 _enhance_citations_with_positions, report_text, pdf_path
             )
 
-        # 2. Fallback: inject citations if LLM didn't produce any
-        if not re.search(r"\[\[p\.\d+", enhanced):
+        if not re.search(r"\[\[p\.\s*\d+", enhanced):
             enhanced = _postprocess_citations(enhanced, paper.get("full_text", ""))
 
         if enhanced != report_text:
@@ -563,7 +643,6 @@ async def generate_report_stream(paper: dict, figures: list[dict], lang: str = "
 
     # === Discussion phase (automatic, same stream) ===
     if report_text.strip():
-        # Keep-alive: yield status so SSE connection stays open during the transition
         yield _make_status("Starting review discussion...")
         try:
             async for event in generate_discussion_stream(paper, figures, report_text, lang):
@@ -608,28 +687,23 @@ Your task:
 - Keep the EXACT same report structure (## TLDR, ## Motivation, ## Method, ## Experiments, ## Conclusion)
 - Preserve ALL existing [[p.N "quote"]] citations — do NOT remove or modify them
 - Preserve ALL existing image references ![...](...) — do NOT remove or modify them
-- Preserve ALL existing mermaid diagrams — do NOT remove or modify them
+- Preserve ALL existing generated diagrams and image references ![...](...) — do NOT remove or modify them
 - You may add new sentences or paragraphs, but do NOT delete existing content unless replacing it with something better
 - PERSPECTIVE: Use THIRD-PERSON perspective throughout: "the authors propose...", "this paper presents...". NEVER use first-person ("we", "our") as if you are the paper's author. If the original report incorrectly uses first-person, fix it to third-person.
 - Write in the same language and style as the original report
 - Output ONLY the revised report starting with ## TLDR — no preamble or explanation"""
 
 
-async def _stream_simple_completion(messages):
+async def _stream_simple_completion(messages, max_tokens=4096):
     """Async generator for streaming a simple (no tool-calling) LLM completion."""
-    stream = await client.chat.completions.create(
+    async for sc in generate_stream(
+        messages,
         model=MODEL,
-        messages=messages,
         temperature=TEMPERATURE,
-        max_tokens=4096,
-        stream=True,
-    )
-    async for chunk in stream:
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta
-        if delta.content:
-            yield delta.content
+        max_tokens=max_tokens,
+    ):
+        if sc.content:
+            yield sc.content
 
 
 async def generate_discussion_stream(paper: dict, figures: list[dict], report: str, lang: str = "en"):
@@ -730,7 +804,7 @@ async def generate_discussion_stream(paper: dict, figures: list[dict], report: s
     ]
 
     polished_chunks = []
-    async for chunk in _stream_simple_completion(polish_messages):
+    async for chunk in _stream_simple_completion(polish_messages, max_tokens=MAX_REPORT_TOKENS):
         polished_chunks.append(chunk)
         yield {"type": "polish_chunk", "content": chunk}
 
@@ -743,11 +817,11 @@ async def generate_discussion_stream(paper: dict, figures: list[dict], report: s
             _enhance_citations_html, polished_report, paper.get("full_text", "")
         )
     else:
-        pdf_path = str(Path(__file__).parent / "data" / "uploads" / f"{paper['id']}.pdf")
+        pdf_path = str(DATA_DIR / "uploads" / f"{paper['id']}.pdf")
         polished_report = await asyncio.to_thread(
             _enhance_citations_with_positions, polished_report, pdf_path
         )
-    if not re.search(r"\[\[p\.\d+", polished_report):
+    if not re.search(r"\[\[p\.\s*\d+", polished_report):
         polished_report = _postprocess_citations(polished_report, paper.get("full_text", ""))
 
     await update_report(paper["id"], polished_report)

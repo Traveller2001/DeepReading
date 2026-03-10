@@ -1,3 +1,4 @@
+import logging
 import re
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -5,6 +6,8 @@ from pathlib import Path
 import fitz  # PyMuPDF
 from PIL import Image
 import io
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -15,6 +18,7 @@ class ExtractedFigure:
     width: int
     height: int
     caption: str = ""
+    description: str = ""
 
 
 @dataclass
@@ -282,6 +286,32 @@ def _extract_figure_regions(
     return figures
 
 
+def _try_vision_extraction(
+    doc: fitz.Document, out_path: Path
+) -> list[ExtractedFigure]:
+    """Try vision-based figure extraction. Returns empty list on any failure."""
+    try:
+        from processor.vision_extractor import extract_figures_with_vision
+        results = extract_figures_with_vision(doc, out_path)
+        if not results:
+            return []
+        return [
+            ExtractedFigure(
+                fig_index=r["fig_index"],
+                filename=r["filename"],
+                page_num=r["page_num"],
+                width=r["width"],
+                height=r["height"],
+                caption=r.get("caption", ""),
+                description=r.get("description", ""),
+            )
+            for r in results
+        ]
+    except Exception as e:
+        logger.warning("Vision extraction failed, will fall back: %s", e)
+        return []
+
+
 def _extract_embedded_images(
     doc: fitz.Document, out_path: Path
 ) -> list[ExtractedFigure]:
@@ -355,9 +385,12 @@ def process_pdf(pdf_bytes: bytes, paper_id: str, output_dir: str) -> ProcessedPa
     abstract = _extract_abstract(full_text)
     full_text = _truncate_text(full_text)
 
-    # 1. Try caption-based region cropping (best quality)
-    # 2. Fall back to embedded raster images
-    figures = _extract_figure_regions(doc, out_path)
+    # 1. Try vision-based extraction (best quality, needs API)
+    figures = _try_vision_extraction(doc, out_path)
+    # 2. Fall back to caption-based region cropping
+    if not figures:
+        figures = _extract_figure_regions(doc, out_path)
+    # 3. Final fallback: embedded raster images
     if not figures:
         figures = _extract_embedded_images(doc, out_path)
 

@@ -3,7 +3,9 @@
 import re
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent / "data" / "figures"
+from config import DATA_DIR
+
+FIGURES_DIR = DATA_DIR / "figures"
 
 # HTML template that wraps user content with proper fonts and a tight layout.
 _HTML_TEMPLATE = """\
@@ -43,7 +45,7 @@ def execute_html_figure(code: str, paper_id: str, fig_name: str) -> dict:
     """
     safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", fig_name)[:60] or "figure"
 
-    out_dir = DATA_DIR / paper_id
+    out_dir = FIGURES_DIR / paper_id
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"gen_{safe_name}.png"
 

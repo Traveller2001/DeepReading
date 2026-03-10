@@ -1,14 +1,11 @@
 """Review generated figures using a vision LLM to catch quality issues."""
 
 import base64
-import os
 from pathlib import Path
 
-from openai import OpenAI
+from llm_client import generate_sync
 
-_client: OpenAI | None = None
-
-VISION_MODEL = "ep-20260225112250-pgxzh"
+from config import VISION_MODEL
 
 REVIEW_PROMPT = (
     "You are a figure quality reviewer for an academic paper reading tool. "
@@ -24,19 +21,6 @@ REVIEW_PROMPT = (
     "FAIL: (brief description of problems found)\n"
     "Only reply with one line starting with PASS or FAIL."
 )
-
-
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        api_key = os.environ.get("ARK_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("ARK_API_KEY not set — cannot review figures")
-        _client = OpenAI(
-            base_url="https://ark.cn-beijing.volces.com/api/v3",
-            api_key=api_key,
-        )
-    return _client
 
 
 def review_figure(image_path: str, description: str = "") -> dict:
@@ -61,27 +45,11 @@ def review_figure(image_path: str, description: str = "") -> dict:
         if description:
             prompt += f"\n\nThe figure is supposed to show: {description}"
 
-        client = _get_client()
-        response = client.responses.create(
+        reply = generate_sync(
+            prompt,
+            images=[b64],
             model=VISION_MODEL,
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_image",
-                            "image_url": f"data:image/png;base64,{b64}",
-                        },
-                        {
-                            "type": "input_text",
-                            "text": prompt,
-                        },
-                    ],
-                }
-            ],
         )
-
-        reply = response.output_text.strip()
         passed = reply.upper().startswith("PASS")
         return {"passed": passed, "feedback": reply}
 

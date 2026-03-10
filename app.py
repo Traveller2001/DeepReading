@@ -9,12 +9,12 @@ from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from database import (
+from core.database import (
     init_db, insert_paper, insert_figures, get_paper, get_figures,
     list_papers, delete_paper, update_discussion,
 )
-from pdf_processor import process_pdf, figures_to_dicts
-from llm_service import generate_report_stream, generate_discussion_stream
+from processor.pdf_processor import process_pdf, figures_to_dicts
+from core.llm_service import generate_report_stream, generate_discussion_stream
 
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
@@ -98,7 +98,7 @@ class UrlRequest(BaseModel):
 
 @app.post("/api/papers/upload_url")
 async def upload_url(req: UrlRequest):
-    from html_processor import fetch_url, detect_content_type, process_html
+    from processor.html_processor import fetch_url, detect_content_type, process_html
 
     url = req.url.strip()
     if not url:
@@ -316,5 +316,7 @@ async def api_get_discussion(paper_id: str):
 
 
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

@@ -36,11 +36,125 @@ class ProcessedHTML:
 # URL Fetching
 # ---------------------------------------------------------------------------
 
+def _is_cloudflare_challenge(resp) -> bool:
+    """Check if the response is a Cloudflare JS challenge page."""
+    if resp.status_code == 403:
+        body = resp.text[:2000].lower()
+        if "just a moment" in body or "cloudflare" in body or "cf-browser-verification" in body:
+            return True
+    return False
+
+
+def _fetch_with_playwright(url: str) -> tuple[str, bytes]:
+    """Fetch a URL using a headless browser (Playwright) to bypass JS challenges."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
+        )
+        try:
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1920, "height": 1080},
+                locale="en-US",
+            )
+
+            # Remove webdriver flag to avoid detection
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            """)
+
+            page = context.new_page()
+
+            # Navigate and wait for Cloudflare challenge to resolve
+            resp = page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+            # Wait for the challenge to complete (title changes from "Just a moment...")
+            # Cloudflare can take up to 30s+ to verify
+            for _ in range(45):
+                title = page.title().lower()
+                if "just a moment" not in title:
+                    break
+                page.wait_for_timeout(2000)
+
+            # Wait a bit more for content to settle
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+
+            final_url = page.url
+
+            # Check if it ended up at a PDF
+            if final_url.lower().endswith(".pdf") or "/pdf/" in final_url.lower():
+                cookies = context.cookies()
+                session = requests.Session()
+                for c in cookies:
+                    session.cookies.set(c["name"], c["value"], domain=c["domain"])
+                session.headers.update({
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/122.0.0.0 Safari/537.36"
+                    ),
+                })
+                browser.close()
+                dl_resp = session.get(final_url, timeout=60, allow_redirects=True)
+                dl_resp.raise_for_status()
+                return dl_resp.headers.get("Content-Type", ""), dl_resp.content
+
+            # Get HTML content
+            html_content = page.content()
+
+            # If still showing challenge page, try to extract cookies and
+            # retry with requests (sometimes cookies alone are enough)
+            if "just a moment" in page.title().lower():
+                cookies = context.cookies()
+                session = requests.Session()
+                for c in cookies:
+                    session.cookies.set(c["name"], c["value"], domain=c["domain"])
+                session.headers.update({
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/122.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                })
+                browser.close()
+                retry_resp = session.get(final_url, timeout=60, allow_redirects=True)
+                if retry_resp.status_code == 200:
+                    return retry_resp.headers.get("Content-Type", ""), retry_resp.content
+                raise RuntimeError(
+                    f"该网站受 Cloudflare 保护，无法自动访问。"
+                    f"请手动下载 PDF 后上传。"
+                    f"目标地址: {final_url}"
+                )
+
+            content_type = resp.headers.get("content-type", "") if resp else "text/html"
+            body = html_content.encode("utf-8")
+
+            return content_type, body
+        finally:
+            browser.close()
+
+
 def fetch_url(url: str) -> tuple[str, bytes]:
     """Fetch a URL and return (content_type, body_bytes).
 
     Uses a session with retries to handle sites that require cookies
     (e.g., anti-bot cookie checks on first visit).
+    Falls back to Playwright (headless browser) for Cloudflare-protected sites.
     """
     parsed = urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -66,7 +180,7 @@ def fetch_url(url: str) -> tuple[str, bytes]:
             "q=0.9,image/avif,image/webp,*/*;q=0.8"
         ),
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": "gzip, deflate",
         "Referer": referer,
     })
 
@@ -79,6 +193,10 @@ def fetch_url(url: str) -> tuple[str, bytes]:
         and len(resp.content) < 5000
         and b"js_unavailable" in resp.content
     ):
+        # Check if this is a Cloudflare challenge — needs a real browser
+        if _is_cloudflare_challenge(resp):
+            return _fetch_with_playwright(url)
+
         # Some sites set a challenge cookie on first visit; retry with cookies
         # Try hitting the origin first to get cookies, then the actual URL
         try:
@@ -86,6 +204,10 @@ def fetch_url(url: str) -> tuple[str, bytes]:
         except Exception:
             pass
         resp = session.get(url, timeout=60, allow_redirects=True)
+
+        # If still Cloudflare-blocked after retry, use playwright
+        if _is_cloudflare_challenge(resp):
+            return _fetch_with_playwright(url)
 
     resp.raise_for_status()
     content_type = resp.headers.get("Content-Type", "")

@@ -6,7 +6,6 @@
 <title>DeepReading</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <style>
@@ -514,23 +513,6 @@ header .subtitle {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 13px;
-}
-
-.report-content .mermaid-container {
-  text-align: center;
-  margin: 24px 0;
-  padding: 24px 16px;
-  background: linear-gradient(135deg, #f8fafc 0%, #f0f4f8 100%);
-  border-radius: 12px;
-  border: 1px solid #e2e8f0;
-  overflow-x: auto;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-}
-
-.report-content .mermaid-container svg {
-  max-width: 100%;
-  height: auto;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.06));
 }
 
 .report-content blockquote {
@@ -1144,7 +1126,6 @@ function showPaperView(paper) {
   if (hasReport) {
     rc.style.display = 'block';
     rc.innerHTML = renderMarkdown(paper.report);
-    renderMermaidDiagrams();
     // Load saved discussion
     loadSavedDiscussion(paper.id);
   } else {
@@ -1201,7 +1182,6 @@ function generateReport(paperId) {
         const replaceMatch = markdown.match(/<!--FULL_REPLACE-->([\s\S]*)<!--\/FULL_REPLACE-->/);
         const finalMarkdown = replaceMatch ? replaceMatch[1] : markdown;
         rc.innerHTML = renderMarkdown(finalMarkdown);
-        renderMermaidDiagrams();
       }
 
       if (polishIndicator) polishIndicator.remove();
@@ -1293,7 +1273,6 @@ function generateReport(paperId) {
         const replaceMatch = markdown.match(/<!--FULL_REPLACE-->([\s\S]*)<!--\/FULL_REPLACE-->/);
         const finalMarkdown = replaceMatch ? replaceMatch[1] : markdown;
         rc.innerHTML = renderMarkdown(finalMarkdown);
-        renderMermaidDiagrams();
 
         // Update thinking panel to show review phase
         $('#thinkingDot').style.display = 'none';
@@ -1390,7 +1369,6 @@ function generateReport(paperId) {
         const finalReport = event.report || polishMarkdown;
         if (finalReport) {
           rc.innerHTML = renderMarkdown(finalReport);
-          renderMermaidDiagrams();
         }
         break;
       }
@@ -1415,7 +1393,7 @@ function renderMarkdown(rawMarkdown) {
   // Extract citations → placeholders before markdown parsing
   const cites = [];
   md = md.replace(
-    /\[\[p\.(\d+)(?::(\d+))?\s*(?:[\u201C"]([^\u201D"]*)[\u201D"](?:\s+[\u201C"][^\u201D"]*[\u201D"])*)?\s*\]\]/g,
+    /\[\[p\.\s*(\d+)(?::(\d+))?\s*(?:[\u201C"]([^\u201D"]*)[\u201D"](?:\s+[\u201C"][^\u201D"]*[\u201D"])*)?\s*\]\]/g,
     (match, page, yPos, quote) => {
       cites.push({ page, yPos: yPos || null, quote: quote || '' });
       return `%%CITE${cites.length - 1}%%`;
@@ -1469,39 +1447,7 @@ function renderMarkdown(rawMarkdown) {
     }
   });
 
-  // Convert mermaid code blocks to renderable containers
-  html = html.replace(
-    /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
-    (match, code) => {
-      const decoded = code
-        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&').replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'");
-      return `<div class="mermaid-container"><pre class="mermaid">${decoded}</pre></div>`;
-    }
-  );
-
   return html;
-}
-
-// Render mermaid diagrams after DOM update
-let _mermaidId = 0;
-async function renderMermaidDiagrams() {
-  const nodes = document.querySelectorAll('#reportContent pre.mermaid');
-  for (const node of nodes) {
-    if (node.dataset.rendered) continue;
-    node.dataset.rendered = 'true';
-    try {
-      const id = 'mermaid-' + (++_mermaidId);
-      const { svg } = await mermaid.render(id, node.textContent.trim());
-      node.innerHTML = svg;
-    } catch (e) {
-      console.warn('Mermaid render error:', e);
-      // Leave the raw code visible on error
-      node.style.color = 'var(--text-secondary)';
-      node.style.fontSize = '12px';
-    }
-  }
 }
 
 // --- Thinking panel ---
@@ -1932,7 +1878,7 @@ function renderDiscussionMsgBody(bodyEl) {
   // Extract citations before markdown parse
   const cites = [];
   let md = raw.replace(
-    /\[\[p\.(\d+)(?::(\d+))?\s*(?:[\u201C"]([^\u201D"]*)[\u201D"])?\s*\]\]/g,
+    /\[\[p\.\s*(\d+)(?::(\d+))?\s*(?:[\u201C"]([^\u201D"]*)[\u201D"])?\s*\]\]/g,
     (match, page, yPos, quote) => {
       cites.push({ page, yPos: yPos || null, quote: quote || '' });
       return `%%CITE${cites.length - 1}%%`;
@@ -2046,31 +1992,6 @@ function showToast(msg, isError = false) {
 }
 
 // Init
-try {
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'loose',
-    theme: 'base',
-    themeVariables: {
-      primaryColor: '#e0f2fe',
-      primaryTextColor: '#1e293b',
-      primaryBorderColor: '#7dd3fc',
-      secondaryColor: '#fef3c7',
-      secondaryTextColor: '#1e293b',
-      secondaryBorderColor: '#fcd34d',
-      tertiaryColor: '#e0e7ff',
-      tertiaryBorderColor: '#a5b4fc',
-      lineColor: '#64748b',
-      textColor: '#334155',
-      fontSize: '14px',
-      fontFamily: 'system-ui, -apple-system, "Noto Sans CJK SC", sans-serif',
-      nodeTextColor: '#1e293b',
-    },
-    flowchart: { curve: 'basis', padding: 16, nodeSpacing: 50, rankSpacing: 60 },
-  });
-} catch (e) {
-  console.warn('Mermaid not available:', e);
-}
 loadPaperList();
 </script>
 </body>

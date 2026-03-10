@@ -1,7 +1,7 @@
 import aiosqlite
-from pathlib import Path
+from config import DATA_DIR
 
-DB_PATH = Path(__file__).parent / "data" / "papers.db"
+DB_PATH = DATA_DIR / "papers.db"
 
 
 def _db():
@@ -51,6 +51,11 @@ async def init_db():
             await conn.execute("ALTER TABLE papers ADD COLUMN source_url TEXT")
         if "source_html" not in existing_cols:
             await conn.execute("ALTER TABLE papers ADD COLUMN source_html TEXT")
+        # Migration: add description column to figures table
+        cursor2 = await conn.execute("PRAGMA table_info(figures)")
+        fig_cols = {row[1] for row in await cursor2.fetchall()}
+        if "description" not in fig_cols:
+            await conn.execute("ALTER TABLE figures ADD COLUMN description TEXT DEFAULT ''")
         await conn.commit()
 
 
@@ -75,9 +80,9 @@ async def insert_figures(paper_id: str, figures: list[dict]):
     async with _db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
         await conn.executemany(
-            """INSERT INTO figures (paper_id, fig_index, filename, page_num, width, height, caption)
-               VALUES (:paper_id, :fig_index, :filename, :page_num, :width, :height, :caption)""",
-            [{"paper_id": paper_id, **f} for f in figures],
+            """INSERT INTO figures (paper_id, fig_index, filename, page_num, width, height, caption, description)
+               VALUES (:paper_id, :fig_index, :filename, :page_num, :width, :height, :caption, :description)""",
+            [{"paper_id": paper_id, "description": "", **f} for f in figures],
         )
         await conn.commit()
 
