@@ -85,6 +85,10 @@ DeepReading/
 4. **Citation Enhancement** — Post-processing adds precise y-positions to citations for accurate scroll-to-source
 5. **Discussion & Polish** — 3 rounds of reader questions + writer answers, then a polished final report
 
+## TODO
+
+- **Quality Scoring** — Generate a "credibility / citation density / coverage" metric for reports and highlight sections with weak evidence.
+
 ## License
 
 Apache 2.0
